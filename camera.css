@@ -36,7 +36,10 @@ button { cursor: pointer; }
 .camera-preview-wrap, .camera-remote-wrap { position: relative; isolation: isolate; overflow: hidden; border-radius: 13px; background: #08131c; }
 .camera-preview-wrap { aspect-ratio: 4 / 3; margin-top: 17px; }
 .camera-video { position: relative; z-index: 2; display: block; width: 100%; height: 100%; object-fit: cover; opacity: 1; visibility: visible; background: #08131c; }
-.camera-local-video { transform: scaleX(-1); }
+.camera-local-video,
+.camera-remote-video {
+  transform: none !important;
+}
 .camera-video-placeholder { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; padding: 20px; color: #c4d3dc; text-align: center; font-size: .95rem; background: linear-gradient(135deg, #142f43, #08131c); }
 .camera-video-placeholder[hidden], .camera-video-placeholder.is-hidden { display: none !important; }
 .camera-live-badge { position: absolute; z-index: 4; top: 12px; left: 12px; border-radius: 999px; padding: 5px 8px; color: #fff; background: #c91d2b; font-size: .7rem; font-weight: 800; letter-spacing: .08em; }
