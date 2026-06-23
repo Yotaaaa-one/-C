@@ -47,6 +47,21 @@
       audio: true
     };
   }
+  function getPersistentOfficerId() {
+    const key = 'ruling-eye-officer-id';
+    try {
+      let officerId = localStorage.getItem(key);
+      if (!officerId) {
+        const randomPart = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        officerId = `officer-${randomPart}`;
+        localStorage.setItem(key, officerId);
+      }
+      return officerId;
+    } catch (_) {
+      return `officer-${window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    }
+  }
+  function deviceType() { return /iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'iOS' : 'web'; }
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   }
@@ -104,6 +119,14 @@
     const retryCameraButton = $('retryCameraButton');
     const qualitySummary = $('qualitySummary');
     const qualityButtons = [...document.querySelectorAll('[data-quality-mode]')];
+    const startWaitingButton = $('startWaitingButton');
+    const stopWaitingButton = $('stopWaitingButton');
+    const waitingState = $('waitingState');
+    const incomingCallPanel = $('incomingCallPanel');
+    const incomingCallLocation = $('incomingCallLocation');
+    const incomingCallReason = $('incomingCallReason');
+    const acceptCallButton = $('acceptCallButton');
+    const declineCallButton = $('declineCallButton');
     const status = $('connectionStatus');
     const error = $('cameraError');
     const video = $('localVideo');
@@ -117,6 +140,13 @@
     let unsubscribeAnswerCandidates;
     let qualityMode = 'standard';
     let usedCameraFallback = false;
+    const officerId = getPersistentOfficerId();
+    let officerRef;
+    let waitingTournamentId = '';
+    let waitingHeartbeat;
+    let unsubscribeIncomingCalls;
+    let incomingCall;
+    let activeCallRef;
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
 
@@ -132,6 +162,75 @@
     function setQualityButtonsDisabled(disabled) {
       qualityButtons.forEach((button) => { button.disabled = disabled; });
     }
+    function setWaitingUi(state) {
+      const online = state === 'online';
+      const busy = state === 'busy';
+      waitingState.textContent = busy ? '映像対応中' : online ? '本部呼出待機中' : '待機停止中';
+      waitingState.dataset.state = busy ? 'calling' : online ? 'connected' : 'idle';
+      startWaitingButton.disabled = online || busy;
+      stopWaitingButton.disabled = !online;
+    }
+    async function updateOfficerStatus(status, extra = {}) {
+      if (!officerRef) return;
+      await officerRef.set({ status, lastSeen: serverTime(), updatedAt: serverTime(), ...extra }, { merge: true });
+      setWaitingUi(status);
+    }
+    function hideIncomingCall() {
+      incomingCallPanel.hidden = true;
+      incomingCall = null;
+    }
+    function showIncomingCall(call) {
+      if (activeSession) return;
+      incomingCall = call;
+      incomingCallLocation.textContent = `${call.hole || '-'}H / ${call.groupNo || '-'}組`;
+      incomingCallReason.textContent = `理由: ${call.reason || '本部確認'}`;
+      incomingCallPanel.hidden = false;
+    }
+    async function startWaiting() {
+      const tournamentId = cleanTournamentId(tournamentInput.value);
+      const officerName = nameInput.value.trim();
+      showError(error, '');
+      if (!tournamentId || !officerName) {
+        showError(error, '待機開始には大会IDと競技委員名を入力してください。');
+        return;
+      }
+      try {
+        db = db || createFirebase();
+        if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
+        if (waitingHeartbeat) clearInterval(waitingHeartbeat);
+        waitingTournamentId = tournamentId;
+        officerRef = db.collection('tournaments').doc(tournamentId).collection('camera_officers').doc(officerId);
+        const existingOfficer = await officerRef.get();
+        const officerData = {
+          officerId, officerName, status: activeSession ? 'busy' : 'online', currentSessionId: activeSession?.id || '',
+          qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, lastSeen: serverTime(),
+          updatedAt: serverTime(), deviceType: deviceType()
+        };
+        if (!existingOfficer.exists) officerData.createdAt = serverTime();
+        await officerRef.set(officerData, { merge: true });
+        setWaitingUi(activeSession ? 'busy' : 'online');
+        waitingHeartbeat = setInterval(() => {
+          updateOfficerStatus(activeSession ? 'busy' : 'online', { currentSessionId: activeSession?.id || '', qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label }).catch(console.warn);
+        }, 25000);
+        unsubscribeIncomingCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').where('targetOfficerId', '==', officerId).onSnapshot((snapshot) => {
+          const requested = snapshot.docs.map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() })).filter((call) => call.status === 'requested');
+          if (requested.length) showIncomingCall(requested.sort((a, b) => (a.requestedAt?.toMillis?.() || 0) - (b.requestedAt?.toMillis?.() || 0))[0]);
+          else if (!activeSession) hideIncomingCall();
+        }, (listenError) => showError(error, `本部呼出を受信できませんでした: ${listenError.message}`));
+      } catch (waitError) {
+        showError(error, `待機を開始できませんでした: ${waitError.message}`);
+        setWaitingUi('offline');
+      }
+    }
+    async function stopWaiting() {
+      if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
+      unsubscribeIncomingCalls = null;
+      if (waitingHeartbeat) clearInterval(waitingHeartbeat);
+      waitingHeartbeat = null;
+      hideIncomingCall();
+      try { await updateOfficerStatus(activeSession ? 'busy' : 'offline', { currentSessionId: activeSession?.id || '' }); } catch (waitError) { console.warn('待機終了状態を保存できませんでした', waitError); }
+      if (!activeSession) setWaitingUi('offline');
+    }
     function currentQualityData(stream = localStream) {
       const quality = QUALITY_MODES[qualityMode];
       const settings = stream?.getVideoTracks()[0]?.getSettings?.() || {};
@@ -144,8 +243,12 @@
       };
     }
     async function saveQualityToSession() {
-      if (!activeSession || !localStream) return;
-      try { await activeSession.update(currentQualityData()); } catch (saveError) { console.warn('画質情報を保存できませんでした', saveError); }
+      if (!localStream) return;
+      const data = currentQualityData();
+      const writes = [];
+      if (activeSession) writes.push(activeSession.update(data));
+      if (officerRef) writes.push(officerRef.update({ qualityMode: data.qualityMode, qualityLabel: data.qualityLabel, lastSeen: serverTime(), updatedAt: serverTime() }));
+      try { await Promise.all(writes); } catch (saveError) { console.warn('画質情報を保存できませんでした', saveError); }
     }
 
     function reportLocalVideoMetadata() {
@@ -254,18 +357,24 @@
 
     async function endCall({ updateFirestore = true } = {}) {
       const session = activeSession;
+      const callRef = activeCallRef;
       finishLocalCall();
       if (updateFirestore && session) {
         try { await session.update({ status: 'ended', endedAt: serverTime() }); } catch (err) { console.warn('終了状態を保存できませんでした', err); }
       }
+      if (callRef) {
+        try { await callRef.update({ status: 'ended', endedAt: serverTime() }); } catch (err) { console.warn('呼出終了状態を保存できませんでした', err); }
+      }
+      activeCallRef = null;
+      updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
       setStatus(status, '終了しました');
     }
 
-    async function makeCall() {
+    async function makeCall(hqCall = null) {
       const tournamentId = cleanTournamentId(tournamentInput.value);
-      const officerName = nameInput.value.trim();
-      const hole = holeInput.value.trim();
-      const groupNo = groupInput.value.trim();
+      const officerName = hqCall?.targetOfficerName || nameInput.value.trim();
+      const hole = String(hqCall?.hole || holeInput.value.trim());
+      const groupNo = String(hqCall?.groupNo || groupInput.value.trim());
       showError(error, '');
       if (!tournamentId || !officerName || !hole || !groupNo) {
         showError(error, '大会ID、競技委員名、ホール番号、組番号をすべて入力してください。'); return;
@@ -288,7 +397,20 @@
         const sessions = db.collection('tournaments').doc(tournamentId).collection('camera_sessions');
         activeSession = sessions.doc();
         const roomId = activeSession.id;
-        await activeSession.set({ officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null, memo: '', hqUser: '', ...currentQualityData() });
+        activeCallRef = hqCall?.ref || null;
+        const sessionData = {
+          officerId, officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null,
+          memo: '', hqUser: '', callId: hqCall?.id || '', requestMode: hqCall ? 'hq_to_officer' : 'officer_manual', reason: hqCall?.reason || '', ...currentQualityData()
+        };
+        if (activeCallRef) {
+          const batch = db.batch();
+          batch.set(activeSession, sessionData);
+          batch.update(activeCallRef, { status: 'accepted', sessionId: activeSession.id, acceptedAt: serverTime() });
+          await batch.commit();
+        } else {
+          await activeSession.set(sessionData);
+        }
+        await updateOfficerStatus('busy', { currentSessionId: activeSession.id, qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label });
 
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         localStream.getTracks().forEach((track) => peer.addTrack(track, localStream));
@@ -296,7 +418,10 @@
           if (event.candidate) activeSession.collection('offerCandidates').add(event.candidate.toJSON()).catch(console.warn);
         };
         peer.onconnectionstatechange = () => {
-          if (peer?.connectionState === 'connected') { setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み'); }
+          if (peer?.connectionState === 'connected') {
+            setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み');
+            if (activeCallRef) activeCallRef.update({ status: 'connected', connectedAt: serverTime() }).catch(console.warn);
+          }
           if (['failed', 'disconnected'].includes(peer?.connectionState)) setStatus(status, '接続が切れました。本部を待機中です。', 'calling');
         };
         const offer = await peer.createOffer();
@@ -318,21 +443,62 @@
           if (data.answer && !peer.currentRemoteDescription) peer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch((err) => showError(error, `本部への接続に失敗しました: ${err.message}`));
           if (data.status === 'connected') { setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み'); }
           if (data.status === 'ended') {
+            const callRef = activeCallRef;
             finishLocalCall();
+            if (callRef) callRef.update({ status: 'ended', endedAt: serverTime() }).catch(console.warn);
+            activeCallRef = null;
+            updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
             setStatus(status, '本部側で対応完了になりました');
           }
         });
+        return true;
       } catch (err) {
         console.error(err);
+        const callRef = activeCallRef;
         showError(error, `映像共有を開始できませんでした: ${err.message}`);
         if (!localStream) debug('camera', `カメラ取得失敗: ${err.name || err.message}`);
         finishLocalCall();
+        if (callRef) callRef.update({ status: 'missed', endedAt: serverTime() }).catch(console.warn);
+        activeCallRef = null;
+        updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
         setStatus(status, '開始できませんでした', 'error');
+        return false;
       }
     }
 
-    startButton.addEventListener('click', makeCall);
+    startButton.addEventListener('click', () => { makeCall(); });
     endButton.addEventListener('click', () => endCall());
+    startWaitingButton.addEventListener('click', startWaiting);
+    stopWaitingButton.addEventListener('click', stopWaiting);
+    acceptCallButton.addEventListener('click', async () => {
+      const call = incomingCall;
+      if (!call) return;
+      acceptCallButton.disabled = true;
+      declineCallButton.disabled = true;
+      holeInput.value = call.hole || '';
+      groupInput.value = call.groupNo || '';
+      hideIncomingCall();
+      const started = await makeCall(call);
+      if (!started) showIncomingCall(call);
+      acceptCallButton.disabled = false;
+      declineCallButton.disabled = false;
+    });
+    declineCallButton.addEventListener('click', async () => {
+      const call = incomingCall;
+      if (!call) return;
+      acceptCallButton.disabled = true;
+      declineCallButton.disabled = true;
+      try {
+        await call.ref.update({ status: 'declined', endedAt: serverTime() });
+        hideIncomingCall();
+        setStatus(status, '本部からの映像依頼を辞退しました');
+      } catch (declineError) {
+        showError(error, `辞退状態を保存できませんでした: ${declineError.message}`);
+      } finally {
+        acceptCallButton.disabled = false;
+        declineCallButton.disabled = false;
+      }
+    });
     retryCameraButton.addEventListener('click', async () => {
       retryCameraButton.disabled = true;
       showError(error, '');
@@ -352,7 +518,10 @@
       const previousMode = qualityMode;
       qualityMode = nextMode;
       setQualityModeUi();
-      if (!localStream) return;
+      if (!localStream) {
+        if (officerRef) officerRef.update({ qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, lastSeen: serverTime(), updatedAt: serverTime() }).catch(console.warn);
+        return;
+      }
       setQualityButtonsDisabled(true);
       try {
         await replaceCameraStream('画質切替');
@@ -365,13 +534,17 @@
       }
     }));
     setQualityModeUi();
+    setWaitingUi('offline');
     micButton.addEventListener('click', () => {
       const track = localStream?.getAudioTracks()[0];
       if (!track) return;
       track.enabled = !track.enabled;
       micButton.textContent = track.enabled ? 'マイク ON' : 'マイク OFF';
     });
-    window.addEventListener('beforeunload', () => { if (activeSession) activeSession.update({ status: 'ended', endedAt: serverTime() }); });
+    window.addEventListener('pagehide', () => {
+      if (activeSession) activeSession.update({ status: 'ended', endedAt: serverTime() });
+      if (officerRef) officerRef.update({ status: 'offline', lastSeen: serverTime(), updatedAt: serverTime() }).catch(() => {});
+    });
   }
 
   async function startAdmin() {
@@ -379,6 +552,14 @@
     const watchButton = $('watchCallsButton');
     const callList = $('callList');
     const callCount = $('callCount');
+    const officerList = $('officerList');
+    const officerCount = $('officerCount');
+    const selectedOfficer = $('selectedOfficer');
+    const requestHole = $('requestHole');
+    const requestGroupNo = $('requestGroupNo');
+    const requestReason = $('requestReason');
+    const sendRequestButton = $('sendRequestButton');
+    const hqCallList = $('hqCallList');
     const status = $('adminConnectionStatus');
     const error = $('adminError');
     const remoteVideo = $('remoteVideo');
@@ -397,10 +578,18 @@
     let activeSession;
     let peer;
     let unsubscribeCalls;
+    let unsubscribeOfficers;
+    let unsubscribeHqCalls;
     let unsubscribeOfferCandidates;
     let unsubscribeActiveSession;
     let queuedCandidates = [];
     let iceCandidatesReceived = 0;
+    let selectedOfficerData;
+    let officersById = new Map();
+    let officersCache = [];
+    let officerRefreshTimer;
+    let activeCallRef;
+    let activeOfficerRef;
     debug('signaling', '接続する呼出を選択してください');
 
     function updateQualityDisplay(data) {
@@ -416,6 +605,75 @@
       const frameRate = data.frameRate || quality.frameRate;
       qualityDisplay.textContent = `画質: ${label} ${width}×${height} / ${frameRate}fps`;
       debug('quality', `受信中画質モード: ${label} ${width}×${height} / ${frameRate}fps`);
+    }
+    function officerAvailability(officer) {
+      const lastSeen = officer.lastSeen?.toMillis?.() || 0;
+      if (!lastSeen || Date.now() - lastSeen > 90000) return { key: 'stale', label: '未更新（オフライン扱い）' };
+      if (officer.status === 'busy') return { key: 'busy', label: '対応中' };
+      if (officer.status === 'online') return { key: 'online', label: 'online' };
+      return { key: 'offline', label: 'offline' };
+    }
+    function renderOfficers(officers) {
+      const sorted = officers.sort((a, b) => (a.officerName || '').localeCompare(b.officerName || '', 'ja'));
+      officersById = new Map(sorted.map((officer) => [officer.id, officer]));
+      if (selectedOfficerData) {
+        const refreshedSelection = officersById.get(selectedOfficerData.id);
+        if (refreshedSelection) selectOfficer(refreshedSelection);
+      }
+      officerCount.textContent = sorted.length;
+      if (!sorted.length) { officerList.innerHTML = '<p class="camera-empty">待機中の競技委員はいません。</p>'; return; }
+      officerList.innerHTML = sorted.map((officer) => {
+        const availability = officerAvailability(officer);
+        const quality = officer.qualityMode ? `${escapeHtml(officer.qualityLabel || QUALITY_MODES[officer.qualityMode]?.label || officer.qualityMode)}` : '画質未取得';
+        const canRequest = availability.key === 'online';
+        return `<article class="camera-call-card camera-officer-card" data-availability="${availability.key}">
+          <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(officer.officerName || '名前未入力')}</span><span class="camera-card-status">${availability.label}</span></div>
+          <div class="camera-card-meta"><span>${quality}</span><time>${formatTime(officer.lastSeen)}</time></div>
+          <button class="camera-button camera-button-primary" type="button" data-select-officer="${escapeHtml(officer.id)}" ${canRequest ? '' : 'disabled'}>呼出</button>
+        </article>`;
+      }).join('');
+    }
+    function selectOfficer(officer) {
+      if (!officer) return;
+      selectedOfficerData = officer;
+      selectedOfficer.textContent = `選択中: ${officer.officerName}（${officerAvailability(officer).label}）`;
+      sendRequestButton.disabled = officerAvailability(officer).key !== 'online';
+    }
+    function renderHqCalls(calls) {
+      const sorted = calls.sort((a, b) => (b.requestedAt?.toMillis?.() || 0) - (a.requestedAt?.toMillis?.() || 0));
+      if (!sorted.length) { hqCallList.innerHTML = '<p class="camera-empty">映像依頼はありません。</p>'; return; }
+      hqCallList.innerHTML = sorted.map((call) => {
+        const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '辞退', ended: '完了', missed: '未応答' }[call.status] || call.status;
+        const canReview = call.sessionId && ['accepted', 'connected'].includes(call.status);
+        return `<article class="camera-call-card" data-status="${escapeHtml(call.status || '')}">
+          <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="camera-card-status">${escapeHtml(statusLabel)}</span></div>
+          <div class="camera-card-meta"><span>${escapeHtml(call.hole || '-')}H / ${escapeHtml(call.groupNo || '-')}組</span><time>${formatTime(call.requestedAt)}</time></div>
+          <div class="camera-card-meta"><span>${escapeHtml(call.reason || '本部確認')}</span><span>${call.sessionId ? 'session準備済み' : ''}</span></div>
+          ${canReview ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(call.sessionId)}">映像を確認</button>` : ''}
+        </article>`;
+      }).join('');
+    }
+    async function sendHqRequest() {
+      const hole = requestHole.value.trim();
+      const groupNo = requestGroupNo.value.trim();
+      if (!db || !activeTournamentId || !selectedOfficerData || !hole || !groupNo) {
+        showError(error, '競技委員、ホール番号、組番号を入力して映像依頼を送信してください。'); return;
+      }
+      sendRequestButton.disabled = true;
+      try {
+        await db.collection('tournaments').doc(activeTournamentId).collection('camera_calls').add({
+          targetOfficerId: selectedOfficerData.officerId || selectedOfficerData.id,
+          targetOfficerName: selectedOfficerData.officerName || '', hole, groupNo, reason: requestReason.value,
+          status: 'requested', sessionId: '', requestedBy: 'HQ', requestedAt: serverTime(), acceptedAt: null,
+          connectedAt: null, endedAt: null, memo: ''
+        });
+        requestHole.value = ''; requestGroupNo.value = '';
+        setStatus(status, `${selectedOfficerData.officerName}へ映像依頼を送信しました`, 'calling');
+      } catch (requestError) {
+        showError(error, `映像依頼を送信できませんでした: ${requestError.message}`);
+      } finally {
+        sendRequestButton.disabled = !selectedOfficerData || officerAvailability(selectedOfficerData).key !== 'online';
+      }
     }
 
     function reportRemoteVideoMetadata() {
@@ -435,6 +693,8 @@
       closePeer(peer); peer = null; queuedCandidates = [];
       iceCandidatesReceived = 0;
       activeSession = null;
+      activeCallRef = null;
+      activeOfficerRef = null;
       remoteVideo.srcObject = null;
       remoteVideo.muted = true;
       setPlaceholderVisible(remotePlaceholder, true, '接続する呼出を選択してください');
@@ -503,13 +763,28 @@
       try {
         db = db || createFirebase();
         if (unsubscribeCalls) unsubscribeCalls();
+        if (unsubscribeOfficers) unsubscribeOfficers();
+        if (unsubscribeHqCalls) unsubscribeHqCalls();
         resetViewer();
         activeTournamentId = tournamentId;
+        selectedOfficerData = null;
+        selectedOfficer.textContent = '競技委員を選択してください';
+        sendRequestButton.disabled = true;
         setStatus(status, '呼出を監視中', 'connected');
         callList.innerHTML = '<p class="camera-empty">呼出を確認しています…</p>';
+        officerList.innerHTML = '<p class="camera-empty">待機中の競技委員を確認しています…</p>';
+        hqCallList.innerHTML = '<p class="camera-empty">映像依頼を確認しています…</p>';
         unsubscribeCalls = db.collection('tournaments').doc(tournamentId).collection('camera_sessions').where('status', 'in', ['calling', 'connected']).onSnapshot((snapshot) => {
           renderCalls(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
         }, (err) => { showError(error, `呼出の取得に失敗しました: ${err.message}`); setStatus(status, '監視エラー', 'error'); });
+        unsubscribeOfficers = db.collection('tournaments').doc(tournamentId).collection('camera_officers').onSnapshot((snapshot) => {
+          officersCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          renderOfficers(officersCache);
+        }, (err) => showError(error, `競技委員待機一覧を取得できませんでした: ${err.message}`));
+        if (!officerRefreshTimer) officerRefreshTimer = setInterval(() => renderOfficers(officersCache), 15000);
+        unsubscribeHqCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').onSnapshot((snapshot) => {
+          renderHqCalls(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+        }, (err) => showError(error, `本部からの映像依頼を取得できませんでした: ${err.message}`));
       } catch (err) { showError(error, err.message); setStatus(status, 'Firebase設定エラー', 'error'); }
     }
     async function addOrQueueCandidate(candidate) {
@@ -529,6 +804,8 @@
         if (!data.offer) throw new Error('競技委員側の接続準備を待っています。数秒後にもう一度お試しください。');
         debug('offer', 'offer受信');
         activeSession = ref;
+        activeCallRef = data.callId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_calls').doc(data.callId) : null;
+        activeOfficerRef = data.officerId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_officers').doc(data.officerId) : null;
         updateQualityDisplay(data);
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
@@ -561,6 +838,8 @@
         const answer = await peer.createAnswer(); await peer.setLocalDescription(answer);
         debug('answer', 'answer作成');
         await ref.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'connected', connectedAt: serverTime(), hqUser: 'HQ' });
+        if (activeCallRef) activeCallRef.update({ status: 'connected', connectedAt: serverTime() }).catch(console.warn);
+        if (activeOfficerRef) activeOfficerRef.update({ status: 'busy', currentSessionId: ref.id, lastSeen: serverTime(), updatedAt: serverTime() }).catch(console.warn);
         memo.value = data.memo || '';
         completeButton.disabled = false;
         unsubscribeActiveSession = ref.onSnapshot((sessionSnapshot) => {
@@ -572,15 +851,29 @@
     }
     async function complete() {
       if (!activeSession) return;
+      const session = activeSession;
+      const callRef = activeCallRef;
+      const officerRef = activeOfficerRef;
       completeButton.disabled = true;
       try {
-        await activeSession.update({ status: 'ended', endedAt: serverTime(), memo: memo.value.trim() });
+        await session.update({ status: 'ended', endedAt: serverTime(), memo: memo.value.trim() });
+        if (callRef) await callRef.update({ status: 'ended', endedAt: serverTime(), memo: memo.value.trim() });
+        if (officerRef) await officerRef.update({ status: 'online', currentSessionId: '', lastSeen: serverTime(), updatedAt: serverTime() });
         resetViewer(); setStatus(status, '対応を完了しました');
       } catch (err) { showError(error, `対応完了を保存できませんでした: ${err.message}`); completeButton.disabled = false; }
     }
     watchButton.addEventListener('click', watchCalls);
     tournamentInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') watchCalls(); });
     callList.addEventListener('click', (event) => { const button = event.target.closest('[data-connect]'); if (button) connect(button.dataset.connect); });
+    officerList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-select-officer]');
+      if (button) selectOfficer(officersById.get(button.dataset.selectOfficer));
+    });
+    hqCallList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-review-call]');
+      if (button) connect(button.dataset.reviewCall);
+    });
+    sendRequestButton.addEventListener('click', sendHqRequest);
     completeButton.addEventListener('click', complete);
     manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });
     reloadVideoButton.addEventListener('click', () => {

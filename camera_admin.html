@@ -25,9 +25,34 @@
           </label>
           <button id="watchCallsButton" class="camera-button camera-button-primary" type="button">呼出を表示</button>
         </section>
+        <section class="camera-call-list-section" aria-label="競技委員待機一覧">
+          <div class="camera-section-heading">
+            <h2>競技委員待機一覧</h2>
+            <span id="officerCount" class="camera-count">0</span>
+          </div>
+          <div id="officerList" class="camera-call-list">
+            <p class="camera-empty">大会IDを入力して待機中の競技委員を表示してください。</p>
+          </div>
+        </section>
+        <section class="camera-panel hq-request-panel" aria-label="本部から映像依頼">
+          <div class="camera-section-heading"><h2>本部から映像依頼</h2></div>
+          <p id="selectedOfficer" class="camera-selected-officer">競技委員を選択してください</p>
+          <label class="camera-field">ホール番号<input id="requestHole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 8"></label>
+          <label class="camera-field">組番号<input id="requestGroupNo" type="text" inputmode="numeric" placeholder="例: 12"></label>
+          <label class="camera-field">理由
+            <select id="requestReason">
+              <option>競技委員要請</option><option>ボール確認</option><option>救済確認</option><option>本部確認</option><option>その他</option>
+            </select>
+          </label>
+          <button id="sendRequestButton" class="camera-button camera-button-primary" type="button" disabled>映像依頼</button>
+        </section>
+        <section class="camera-call-list-section" aria-label="本部からの映像依頼一覧">
+          <div class="camera-section-heading"><h2>本部からの映像依頼</h2></div>
+          <div id="hqCallList" class="camera-call-list"><p class="camera-empty">映像依頼はありません。</p></div>
+        </section>
         <section class="camera-call-list-section" aria-label="呼出中の競技委員">
           <div class="camera-section-heading">
-            <h2>呼出中の競技委員</h2>
+            <h2>映像セッション</h2>
             <span id="callCount" class="camera-count">0</span>
           </div>
           <div id="callList" class="camera-call-list">

@@ -31,6 +31,18 @@
       </div>
     </section>
 
+    <section class="camera-panel camera-wait-panel" aria-label="本部呼出待機">
+      <div class="camera-section-heading">
+        <h2>本部呼出待機</h2>
+        <span id="waitingState" class="camera-state-badge" data-state="idle">待機停止中</span>
+      </div>
+      <p id="waitingNotice" class="camera-wait-notice">待機開始中のみ本部からの映像依頼を受信できます。画面ロック・Safari終了・通信切断中は受信できません。</p>
+      <div class="camera-wait-actions">
+        <button id="startWaitingButton" class="camera-button camera-button-primary" type="button">待機開始</button>
+        <button id="stopWaitingButton" class="camera-button camera-button-secondary" type="button" disabled>待機終了</button>
+      </div>
+    </section>
+
     <section class="camera-panel quality-panel" aria-label="画質モード">
       <div class="camera-section-heading">
         <h2>画質モード</h2>
@@ -42,6 +54,16 @@
         <button class="quality-mode-button" type="button" data-quality-mode="high" aria-pressed="false"><strong>高画質</strong><small>1280×720 / 24fps</small></button>
       </div>
       <p class="camera-quality-help">移動中・電波が弱い場合は通信優先、細部確認には高画質を選択します。</p>
+    </section>
+
+    <section id="incomingCallPanel" class="camera-incoming-call" aria-live="assertive" hidden>
+      <p class="camera-incoming-kicker">本部から映像依頼</p>
+      <h2 id="incomingCallLocation">-</h2>
+      <p id="incomingCallReason" class="camera-incoming-reason">理由: -</p>
+      <div class="camera-incoming-actions">
+        <button id="acceptCallButton" class="camera-button camera-button-primary" type="button">映像開始</button>
+        <button id="declineCallButton" class="camera-button camera-button-danger" type="button">対応できない</button>
+      </div>
     </section>
 
     <section class="camera-preview-wrap" aria-label="カメラプレビュー">
@@ -60,7 +82,7 @@
     </section>
 
     <div class="officer-actions">
-      <button id="startCallButton" class="camera-button camera-button-primary" type="button">本部へ映像共有</button>
+      <button id="startCallButton" class="camera-button camera-button-primary" type="button">手動で本部へ映像共有</button>
       <div class="officer-secondary-actions">
         <button id="retryCameraButton" class="camera-button camera-button-secondary" type="button" disabled>カメラ再取得</button>
         <button id="micButton" class="camera-button camera-button-secondary" type="button" disabled>マイク ON</button>
