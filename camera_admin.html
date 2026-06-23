@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>競技委員カメラ 本部 | PGA スコアシステム</title>
+  <link rel="stylesheet" href="camera.css">
+</head>
+<body class="camera-page camera-admin-page">
+  <main class="camera-admin-shell">
+    <header class="camera-header camera-admin-header">
+      <div>
+        <p class="camera-kicker">PGA SCORE SYSTEM</p>
+        <h1>競技委員カメラ・本部</h1>
+      </div>
+      <p id="adminConnectionStatus" class="camera-status" role="status" data-tone="idle">大会IDを入力してください</p>
+    </header>
+
+    <section class="camera-admin-layout">
+      <aside class="camera-sidebar">
+        <section class="camera-panel tournament-panel">
+          <label class="camera-field">大会ID
+            <input id="tournamentId" type="text" autocomplete="off" placeholder="例: 2026-championship">
+          </label>
+          <button id="watchCallsButton" class="camera-button camera-button-primary" type="button">呼出を表示</button>
+        </section>
+        <section class="camera-call-list-section" aria-label="呼出中の競技委員">
+          <div class="camera-section-heading">
+            <h2>呼出中の競技委員</h2>
+            <span id="callCount" class="camera-count">0</span>
+          </div>
+          <div id="callList" class="camera-call-list">
+            <p class="camera-empty">大会IDを入力して呼出を表示してください。</p>
+          </div>
+        </section>
+      </aside>
+
+      <section class="camera-viewer-column">
+        <section class="camera-panel camera-viewer-panel">
+          <div class="camera-section-heading">
+            <h2 id="viewerTitle">映像確認</h2>
+            <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
+          </div>
+          <div class="camera-remote-wrap">
+            <video id="remoteVideo" class="camera-video camera-remote-video" playsinline autoplay></video>
+            <div id="remotePlaceholder" class="camera-video-placeholder">接続する呼出を選択してください</div>
+          </div>
+          <p id="adminError" class="camera-error" role="alert" hidden></p>
+        </section>
+
+        <section class="camera-panel camera-memo-panel">
+          <label class="camera-field" for="memo">裁定メモ
+            <textarea id="memo" rows="4" placeholder="確認内容・裁定内容を記録"></textarea>
+          </label>
+          <button id="completeButton" class="camera-button camera-button-danger" type="button" disabled>対応完了</button>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <!-- 既存プロジェクトに firebase-config.js がある場合はその設定を利用します。 -->
+  <script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="camera.js"></script>
+</body>
+</html>

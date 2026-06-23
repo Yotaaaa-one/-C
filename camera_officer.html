@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>競技委員カメラ | PGA スコアシステム</title>
+  <link rel="stylesheet" href="camera.css">
+</head>
+<body class="camera-page camera-officer-page">
+  <main class="camera-shell officer-shell">
+    <header class="camera-header">
+      <p class="camera-kicker">PGA SCORE SYSTEM</p>
+      <h1>競技委員カメラ</h1>
+      <p class="camera-subtitle">本部へ現在の映像を共有します</p>
+    </header>
+
+    <section class="camera-panel camera-form-panel" aria-label="呼出情報">
+      <div class="camera-field-grid">
+        <label class="camera-field camera-field-wide">大会ID
+          <input id="tournamentId" type="text" inputmode="text" autocomplete="off" placeholder="例: 2026-championship" required>
+        </label>
+        <label class="camera-field">競技委員名
+          <input id="officerName" type="text" autocomplete="name" placeholder="氏名" required>
+        </label>
+        <label class="camera-field">ホール番号
+          <input id="hole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 12" required>
+        </label>
+        <label class="camera-field">組番号
+          <input id="groupNo" type="text" inputmode="numeric" placeholder="例: 18" required>
+        </label>
+      </div>
+    </section>
+
+    <section class="camera-preview-wrap" aria-label="カメラプレビュー">
+      <video id="localVideo" class="camera-video camera-local-video" playsinline muted></video>
+      <div id="previewPlaceholder" class="camera-video-placeholder">カメラプレビュー</div>
+      <span class="camera-live-badge">LIVE</span>
+    </section>
+
+    <p id="connectionStatus" class="camera-status" role="status" data-tone="idle">準備中</p>
+    <p id="cameraError" class="camera-error" role="alert" hidden></p>
+
+    <div class="officer-actions">
+      <button id="startCallButton" class="camera-button camera-button-primary" type="button">本部へ映像共有</button>
+      <div class="officer-secondary-actions">
+        <button id="micButton" class="camera-button camera-button-secondary" type="button" disabled>マイク ON</button>
+        <button id="endCallButton" class="camera-button camera-button-danger" type="button" disabled>終了</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- 既存プロジェクトに firebase-config.js がある場合はその設定を利用します。 -->
+  <script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="camera.js"></script>
+</body>
+</html>
