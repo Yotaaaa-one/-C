@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>競技委員カメラ 本部 | PGA スコアシステム</title>
+  <title>Ruling Eye｜本部モニター</title>
   <link rel="stylesheet" href="camera.css">
 </head>
 <body class="camera-page camera-admin-page">
   <main class="camera-admin-shell">
     <header class="camera-header camera-admin-header">
       <div>
-        <p class="camera-kicker">PGA SCORE SYSTEM</p>
-        <h1>競技委員カメラ・本部</h1>
+        <p class="camera-kicker">RULING EYE</p>
+        <h1>Ruling Eye｜本部モニター</h1>
+        <p class="camera-subtitle">競技委員 映像裁定支援システム</p>
       </div>
       <p id="adminConnectionStatus" class="camera-status" role="status" data-tone="idle">大会IDを入力してください</p>
     </header>
@@ -41,6 +42,7 @@
             <h2 id="viewerTitle">映像確認</h2>
             <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
           </div>
+          <p id="qualityDisplay" class="camera-quality-display">画質: 未取得</p>
           <div class="camera-remote-wrap">
             <video id="remoteVideo" class="camera-video camera-remote-video" autoplay playsinline muted controls></video>
             <div id="remotePlaceholder" class="camera-video-placeholder">接続する呼出を選択してください</div>

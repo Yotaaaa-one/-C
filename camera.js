@@ -3,6 +3,11 @@
   'use strict';
 
   const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const QUALITY_MODES = {
+    low: { label: '通信優先', width: 640, height: 360, frameRate: 15 },
+    standard: { label: '標準', width: 854, height: 480, frameRate: 20 },
+    high: { label: '高画質', width: 1280, height: 720, frameRate: 24 }
+  };
   const $ = (id) => document.getElementById(id);
   const isOfficerPage = document.body.classList.contains('camera-officer-page');
   const serverTime = () => firebase.firestore.FieldValue.serverTimestamp();
@@ -25,6 +30,23 @@
   }
 
   function cleanTournamentId(value) { return value.trim().replaceAll('/', '-'); }
+  function qualityText(mode) {
+    const quality = QUALITY_MODES[mode] || QUALITY_MODES.standard;
+    return `${quality.label} ${quality.width}×${quality.height} / ${quality.frameRate}fps`;
+  }
+  function qualityConstraints(mode, { fallback = false } = {}) {
+    if (fallback) return { video: true, audio: true };
+    const quality = QUALITY_MODES[mode] || QUALITY_MODES.standard;
+    return {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: quality.width, max: quality.width },
+        height: { ideal: quality.height, max: quality.height },
+        frameRate: { ideal: quality.frameRate, max: quality.frameRate }
+      },
+      audio: true
+    };
+  }
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   }
@@ -80,6 +102,8 @@
     const endButton = $('endCallButton');
     const micButton = $('micButton');
     const retryCameraButton = $('retryCameraButton');
+    const qualitySummary = $('qualitySummary');
+    const qualityButtons = [...document.querySelectorAll('[data-quality-mode]')];
     const status = $('connectionStatus');
     const error = $('cameraError');
     const video = $('localVideo');
@@ -91,28 +115,67 @@
     let activeSession;
     let unsubscribeSession;
     let unsubscribeAnswerCandidates;
-    let usingEnvironmentCamera = false;
+    let qualityMode = 'standard';
+    let usedCameraFallback = false;
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
+
+    function setQualityModeUi() {
+      qualitySummary.textContent = qualityText(qualityMode);
+      qualityButtons.forEach((button) => {
+        const selected = button.dataset.qualityMode === qualityMode;
+        button.classList.toggle('is-active', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+      debug('quality', `使用中画質モード: ${qualityText(qualityMode)}`);
+    }
+    function setQualityButtonsDisabled(disabled) {
+      qualityButtons.forEach((button) => { button.disabled = disabled; });
+    }
+    function currentQualityData(stream = localStream) {
+      const quality = QUALITY_MODES[qualityMode];
+      const settings = stream?.getVideoTracks()[0]?.getSettings?.() || {};
+      return {
+        qualityMode,
+        qualityLabel: quality.label,
+        videoWidth: Number(settings.width) || quality.width,
+        videoHeight: Number(settings.height) || quality.height,
+        frameRate: Number(settings.frameRate) || quality.frameRate
+      };
+    }
+    async function saveQualityToSession() {
+      if (!activeSession || !localStream) return;
+      try { await activeSession.update(currentQualityData()); } catch (saveError) { console.warn('画質情報を保存できませんでした', saveError); }
+    }
 
     function reportLocalVideoMetadata() {
       const track = localStream?.getVideoTracks()[0];
       const width = video.videoWidth;
       const height = video.videoHeight;
       debug('localMetadata', `localVideo: ${width} × ${height}`);
-      debug('localCameraMode', usingEnvironmentCamera ? 'カメラ: 背面（environment）' : 'カメラ: 基本設定');
+      debug('localCameraMode', usedCameraFallback ? 'カメラ: フォールバック設定' : 'カメラ: 背面優先');
       if (track) {
+        const settings = track.getSettings();
         debug('localTrack', `videoTrack: readyState=${track.readyState}, enabled=${track.enabled}`);
-        debug('localSettings', `videoTrack settings: ${JSON.stringify(track.getSettings())}`);
+        debug('localSettings', `videoTrack settings: ${JSON.stringify(settings)}`);
+        debug('localFrameRate', `frameRate: ${settings.frameRate ?? '-'}fps`);
+        debug('localFacingMode', `facingMode: ${settings.facingMode ?? '-'}`);
       }
       debug('localFrame', width === 0 || height === 0 ? '映像フレーム未取得' : '表示レイヤー確認');
       setPlaceholderVisible(placeholder, false);
+      saveQualityToSession();
     }
     video.addEventListener('loadedmetadata', reportLocalVideoMetadata);
 
-    async function getCameraStream({ environmentOnly = false } = {}) {
-      const constraints = environmentOnly ? { video: { facingMode: 'environment' }, audio: true } : { video: true, audio: true };
-      return navigator.mediaDevices.getUserMedia(constraints);
+    async function getCameraStream(mode = qualityMode) {
+      try {
+        usedCameraFallback = false;
+        return await navigator.mediaDevices.getUserMedia(qualityConstraints(mode));
+      } catch (cameraError) {
+        debug('camera', `背面カメラ優先の取得に失敗: ${cameraError.name || cameraError.message}（基本設定へフォールバック）`);
+        usedCameraFallback = true;
+        return navigator.mediaDevices.getUserMedia(qualityConstraints(mode, { fallback: true }));
+      }
     }
     async function showLocalPreview(stream) {
       video.muted = true;
@@ -137,6 +200,7 @@
       endButton.disabled = true;
       micButton.disabled = true;
       retryCameraButton.disabled = true;
+      setQualityButtonsDisabled(false);
       micButton.textContent = 'マイク ON';
       activeSession = null;
     };
@@ -149,6 +213,44 @@
       stopMedia();
       resetCallControls();
     };
+
+    async function replaceOutboundVideoTrack(stream) {
+      if (!peer) { debug('replaceTrack', 'replaceTrack 未実行（WebRTC未接続）'); return; }
+      const newVideoTrack = stream.getVideoTracks()[0];
+      const videoSender = peer.getSenders().find((sender) => sender.track?.kind === 'video');
+      if (!newVideoTrack || !videoSender) {
+        const error = new Error('送信video trackが見つかりません。');
+        debug('replaceTrack', `replaceTrack 失敗: ${error.message}`);
+        throw error;
+      }
+      try {
+        await videoSender.replaceTrack(newVideoTrack);
+        const newAudioTrack = stream.getAudioTracks()[0];
+        const audioSender = peer.getSenders().find((sender) => sender.track?.kind === 'audio');
+        if (newAudioTrack && audioSender) await audioSender.replaceTrack(newAudioTrack);
+        debug('replaceTrack', 'replaceTrack 成功');
+      } catch (replaceError) {
+        debug('replaceTrack', `replaceTrack 失敗: ${replaceError.name || replaceError.message}`);
+        throw replaceError;
+      }
+    }
+    async function replaceCameraStream(reason) {
+      const previousStream = localStream;
+      if (previousStream) previousStream.getTracks().forEach((track) => track.stop());
+      localStream = null;
+      try {
+        debug('camera', `${reason}中: ${qualityText(qualityMode)}`);
+        const nextStream = await getCameraStream(qualityMode);
+        localStream = nextStream;
+        await showLocalPreview(nextStream);
+        await replaceOutboundVideoTrack(nextStream);
+        await saveQualityToSession();
+        debug('camera', `${reason}成功: ${qualityText(qualityMode)}`);
+      } catch (cameraError) {
+        debug('replaceTrack', `replaceTrack 失敗: ${cameraError.name || cameraError.message}`);
+        throw cameraError;
+      }
+    }
 
     async function endCall({ updateFirestore = true } = {}) {
       const session = activeSession;
@@ -170,17 +272,11 @@
       }
       try {
         startButton.disabled = true;
+        setQualityButtonsDisabled(true);
         setStatus(status, 'カメラを起動しています…', 'calling');
         debug('camera', 'カメラ取得中');
-        // この呼出はボタン操作から直接実行されるため、iPhone Safari の権限・自動再生制約を満たします。
-        try {
-          localStream = await getCameraStream();
-          usingEnvironmentCamera = false;
-        } catch (cameraError) {
-          debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}（背面カメラで再試行）`);
-          localStream = await getCameraStream({ environmentOnly: true });
-          usingEnvironmentCamera = true;
-        }
+        // ボタン操作から直接、標準画質・背面カメラ優先で取得します。
+        localStream = await getCameraStream(qualityMode);
         debug('camera', 'カメラ取得成功');
         await showLocalPreview(localStream);
         micButton.disabled = false;
@@ -192,7 +288,7 @@
         const sessions = db.collection('tournaments').doc(tournamentId).collection('camera_sessions');
         activeSession = sessions.doc();
         const roomId = activeSession.id;
-        await activeSession.set({ officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null, memo: '', hqUser: '' });
+        await activeSession.set({ officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null, memo: '', hqUser: '', ...currentQualityData() });
 
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         localStream.getTracks().forEach((track) => peer.addTrack(track, localStream));
@@ -209,6 +305,7 @@
         setStatus(status, '本部の応答を待っています', 'calling');
         debug('hq', '本部接続中');
         endButton.disabled = false;
+        setQualityButtonsDisabled(false);
 
         unsubscribeAnswerCandidates = activeSession.collection('answerCandidates').onSnapshot((snapshot) => {
           snapshot.docChanges().forEach((change) => {
@@ -240,28 +337,34 @@
       retryCameraButton.disabled = true;
       showError(error, '');
       try {
-        debug('camera', 'カメラ再取得中（背面カメラ）');
-        const nextStream = await getCameraStream({ environmentOnly: true });
-        const previousStream = localStream;
-        localStream = nextStream;
-        usingEnvironmentCamera = true;
-        await showLocalPreview(nextStream);
-        if (peer) {
-          await Promise.all(nextStream.getTracks().map((track) => {
-            const sender = peer.getSenders().find((item) => item.track?.kind === track.kind);
-            return sender ? sender.replaceTrack(track) : Promise.resolve(peer.addTrack(track, nextStream));
-          }));
-        }
-        if (previousStream) previousStream.getTracks().forEach((track) => track.stop());
-        debug('camera', 'カメラ再取得成功（背面カメラ）');
+        await replaceCameraStream('カメラ再取得');
       } catch (cameraError) {
         console.error(cameraError);
         showError(error, `カメラを再取得できませんでした: ${cameraError.message}`);
         debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}`);
       } finally {
-        retryCameraButton.disabled = !localStream;
+        retryCameraButton.disabled = false;
       }
     });
+    qualityButtons.forEach((button) => button.addEventListener('click', async () => {
+      const nextMode = button.dataset.qualityMode;
+      if (!QUALITY_MODES[nextMode] || nextMode === qualityMode) return;
+      const previousMode = qualityMode;
+      qualityMode = nextMode;
+      setQualityModeUi();
+      if (!localStream) return;
+      setQualityButtonsDisabled(true);
+      try {
+        await replaceCameraStream('画質切替');
+      } catch (cameraError) {
+        qualityMode = previousMode;
+        setQualityModeUi();
+        showError(error, `画質を切り替えできませんでした: ${cameraError.message}`);
+      } finally {
+        setQualityButtonsDisabled(false);
+      }
+    }));
+    setQualityModeUi();
     micButton.addEventListener('click', () => {
       const track = localStream?.getAudioTracks()[0];
       if (!track) return;
@@ -282,6 +385,7 @@
     const remotePlaceholder = $('remotePlaceholder');
     const viewerTitle = $('viewerTitle');
     const viewerState = $('viewerState');
+    const qualityDisplay = $('qualityDisplay');
     const memo = $('memo');
     const completeButton = $('completeButton');
     const manualPlayButton = $('manualPlayButton');
@@ -299,6 +403,21 @@
     let iceCandidatesReceived = 0;
     debug('signaling', '接続する呼出を選択してください');
 
+    function updateQualityDisplay(data) {
+      const quality = QUALITY_MODES[data?.qualityMode] || QUALITY_MODES.standard;
+      if (!data?.qualityMode) {
+        qualityDisplay.textContent = '画質: 未取得';
+        debug('quality', '受信中画質モード: 未取得');
+        return;
+      }
+      const label = data.qualityLabel || quality.label;
+      const width = data.videoWidth || quality.width;
+      const height = data.videoHeight || quality.height;
+      const frameRate = data.frameRate || quality.frameRate;
+      qualityDisplay.textContent = `画質: ${label} ${width}×${height} / ${frameRate}fps`;
+      debug('quality', `受信中画質モード: ${label} ${width}×${height} / ${frameRate}fps`);
+    }
+
     function reportRemoteVideoMetadata() {
       const width = remoteVideo.videoWidth;
       const height = remoteVideo.videoHeight;
@@ -307,6 +426,7 @@
       setPlaceholderVisible(remotePlaceholder, false);
     }
     remoteVideo.addEventListener('loadedmetadata', reportRemoteVideoMetadata);
+    remoteVideo.addEventListener('resize', reportRemoteVideoMetadata);
 
     function resetViewer() {
       if (unsubscribeOfferCandidates) unsubscribeOfferCandidates();
@@ -325,11 +445,13 @@
       unmuteButton.hidden = true;
       viewerTitle.textContent = '映像確認';
       viewerState.textContent = '未接続'; viewerState.dataset.state = 'idle';
+      qualityDisplay.textContent = '画質: 未取得';
       memo.value = ''; completeButton.disabled = true;
       debug('offer', 'offer未受信');
       debug('answer', 'answer未作成');
       debug('ice', 'ICE候補待機中');
       debug('remote', 'remote stream待機中');
+      debug('quality', '受信中画質モード: 未取得');
       debug('playback', 'muted再生待機中');
       debug('manual', '手動再生不要');
       debug('audio', '音声OFF');
@@ -343,6 +465,7 @@
       try {
         await remoteVideo.play();
         debug('playback', 'muted再生成功');
+        debug('videoPlayback', '映像再生成功');
         setPlaceholderVisible(remotePlaceholder, false);
         manualPlayButton.hidden = true;
         unmuteButton.hidden = false;
@@ -351,6 +474,7 @@
       } catch (playError) {
         console.warn('リモート映像の再生がブロックされました', playError);
         debug('playback', 'muted再生失敗');
+        debug('videoPlayback', '映像再生失敗');
         manualPlayButton.hidden = false;
         manualPlayButton.disabled = false;
         debug('manual', '手動再生ボタン表示');
@@ -405,6 +529,7 @@
         if (!data.offer) throw new Error('競技委員側の接続準備を待っています。数秒後にもう一度お試しください。');
         debug('offer', 'offer受信');
         activeSession = ref;
+        updateQualityDisplay(data);
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
         setPlaceholderVisible(remotePlaceholder, true, '映像を接続しています…');
@@ -440,6 +565,7 @@
         completeButton.disabled = false;
         unsubscribeActiveSession = ref.onSnapshot((sessionSnapshot) => {
           const current = sessionSnapshot.data();
+          if (current) updateQualityDisplay(current);
           if (current?.status === 'ended') { resetViewer(); setStatus(status, '競技委員側で終了しました'); }
         });
       } catch (err) { console.error(err); showError(error, `接続できませんでした: ${err.message}`); resetViewer(); }

@@ -26,6 +26,15 @@ button { cursor: pointer; }
 
 .camera-panel { border: 1px solid var(--camera-line); border-radius: 13px; background: var(--camera-surface); box-shadow: 0 2px 8px rgb(11 41 66 / 6%); }
 .camera-form-panel { padding: 16px; }
+.quality-panel { display: grid; gap: 12px; margin-top: 16px; padding: 16px; }
+.camera-quality-summary, .camera-quality-display { margin: 0; color: var(--camera-blue-dark); font-size: .84rem; font-weight: 800; }
+.camera-quality-display { margin-top: 8px; }
+.quality-mode-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.quality-mode-button { display: grid; min-height: 72px; align-content: center; gap: 4px; border: 2px solid #b9c8d2; border-radius: 10px; padding: 9px 6px; color: var(--camera-navy); background: #f8fbfd; text-align: center; line-height: 1.2; }
+.quality-mode-button strong { font-size: .92rem; }.quality-mode-button small { color: var(--camera-muted); font-size: .7rem; font-weight: 700; }
+.quality-mode-button.is-active { border-color: var(--camera-blue); color: #fff; background: var(--camera-blue); box-shadow: 0 2px 7px rgb(23 105 170 / 25%); }.quality-mode-button.is-active small { color: #e7f3ff; }
+.quality-mode-button:focus-visible { outline: 3px solid rgb(23 105 170 / 35%); outline-offset: 2px; }
+.camera-quality-help { margin: 0; color: var(--camera-muted); font-size: .76rem; line-height: 1.45; }
 .camera-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .camera-field { display: grid; gap: 6px; color: var(--camera-navy); font-size: .86rem; font-weight: 700; }
 .camera-field-wide { grid-column: 1 / -1; }
@@ -53,7 +62,7 @@ button { cursor: pointer; }
 .camera-debug-title { margin: 0 0 5px; color: var(--camera-navy); font-weight: 800; }.camera-debug-list { display: grid; gap: 3px; margin: 0; padding-left: 18px; }.camera-debug-list li { line-height: 1.35; }
 
 .officer-actions { display: grid; gap: 11px; }
-.officer-secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.officer-secondary-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
 .camera-button { min-height: 48px; border: 0; border-radius: 9px; padding: 10px 16px; color: #fff; font-weight: 800; transition: transform .1s ease, opacity .15s ease, background .15s ease; }
 .camera-button:hover:not(:disabled) { transform: translateY(-1px); }.camera-button:active:not(:disabled) { transform: translateY(1px); }
 .camera-button:focus-visible { outline: 3px solid rgb(23 105 170 / 35%); outline-offset: 2px; }
@@ -76,4 +85,5 @@ button { cursor: pointer; }
 .camera-video-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }.camera-video-actions .camera-button { min-width: 145px; }
 
 @media (max-width: 760px) { .camera-admin-shell { width: min(100% - 28px, 680px); padding-top: 20px; }.camera-admin-header, .camera-admin-layout { display: grid; }.camera-admin-header { gap: 4px; }.camera-admin-header .camera-status { margin: 0; }.camera-admin-layout { grid-template-columns: 1fr; }.camera-sidebar { grid-template-columns: 1fr; }.camera-remote-wrap { aspect-ratio: 4 / 3; } }
-@media (max-width: 380px) { .camera-field-grid, .officer-secondary-actions { grid-template-columns: 1fr; }.camera-field-wide { grid-column: auto; } }
+@media (max-width: 520px) { .quality-mode-buttons { grid-template-columns: 1fr; }.officer-secondary-actions { grid-template-columns: 1fr; } }
+@media (max-width: 380px) { .camera-field-grid { grid-template-columns: 1fr; }.camera-field-wide { grid-column: auto; } }

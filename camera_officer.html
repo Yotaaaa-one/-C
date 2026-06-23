@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>競技委員カメラ | PGA スコアシステム</title>
+  <title>Ruling Eye｜競技委員側</title>
   <link rel="stylesheet" href="camera.css">
 </head>
 <body class="camera-page camera-officer-page">
   <main class="camera-shell officer-shell">
     <header class="camera-header">
-      <p class="camera-kicker">PGA SCORE SYSTEM</p>
-      <h1>競技委員カメラ</h1>
-      <p class="camera-subtitle">本部へ現在の映像を共有します</p>
+      <p class="camera-kicker">RULING EYE</p>
+      <h1>Ruling Eye｜競技委員側</h1>
+      <p class="camera-subtitle">競技委員 映像裁定支援システム</p>
     </header>
 
     <section class="camera-panel camera-form-panel" aria-label="呼出情報">
@@ -29,6 +29,19 @@
           <input id="groupNo" type="text" inputmode="numeric" placeholder="例: 18" required>
         </label>
       </div>
+    </section>
+
+    <section class="camera-panel quality-panel" aria-label="画質モード">
+      <div class="camera-section-heading">
+        <h2>画質モード</h2>
+        <span id="qualitySummary" class="camera-quality-summary">標準 854×480 / 20fps</span>
+      </div>
+      <div class="quality-mode-buttons" role="group" aria-label="送信画質を選択">
+        <button class="quality-mode-button" type="button" data-quality-mode="low" aria-pressed="false"><strong>通信優先</strong><small>640×360 / 15fps</small></button>
+        <button class="quality-mode-button is-active" type="button" data-quality-mode="standard" aria-pressed="true"><strong>標準</strong><small>854×480 / 20fps</small></button>
+        <button class="quality-mode-button" type="button" data-quality-mode="high" aria-pressed="false"><strong>高画質</strong><small>1280×720 / 24fps</small></button>
+      </div>
+      <p class="camera-quality-help">移動中・電波が弱い場合は通信優先、細部確認には高画質を選択します。</p>
     </section>
 
     <section class="camera-preview-wrap" aria-label="カメラプレビュー">
