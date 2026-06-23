@@ -38,6 +38,11 @@
 
   function showError(element, message) { element.textContent = message; element.hidden = !message; }
   function setStatus(element, message, tone = 'idle') { element.textContent = message; element.dataset.tone = tone; }
+  function setPlaceholderVisible(placeholder, visible, message) {
+    if (message) placeholder.textContent = message;
+    placeholder.hidden = !visible;
+    placeholder.classList.toggle('is-hidden', !visible);
+  }
   function createDebugReporter(element) {
     const states = new Map();
     return (key, message) => {
@@ -74,6 +79,7 @@
     const startButton = $('startCallButton');
     const endButton = $('endCallButton');
     const micButton = $('micButton');
+    const retryCameraButton = $('retryCameraButton');
     const status = $('connectionStatus');
     const error = $('cameraError');
     const video = $('localVideo');
@@ -85,19 +91,52 @@
     let activeSession;
     let unsubscribeSession;
     let unsubscribeAnswerCandidates;
+    let usingEnvironmentCamera = false;
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
+
+    function reportLocalVideoMetadata() {
+      const track = localStream?.getVideoTracks()[0];
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      debug('localMetadata', `localVideo: ${width} × ${height}`);
+      debug('localCameraMode', usingEnvironmentCamera ? 'カメラ: 背面（environment）' : 'カメラ: 基本設定');
+      if (track) {
+        debug('localTrack', `videoTrack: readyState=${track.readyState}, enabled=${track.enabled}`);
+        debug('localSettings', `videoTrack settings: ${JSON.stringify(track.getSettings())}`);
+      }
+      debug('localFrame', width === 0 || height === 0 ? '映像フレーム未取得' : '表示レイヤー確認');
+      setPlaceholderVisible(placeholder, false);
+    }
+    video.addEventListener('loadedmetadata', reportLocalVideoMetadata);
+
+    async function getCameraStream({ environmentOnly = false } = {}) {
+      const constraints = environmentOnly ? { video: { facingMode: 'environment' }, audio: true } : { video: true, audio: true };
+      return navigator.mediaDevices.getUserMedia(constraints);
+    }
+    async function showLocalPreview(stream) {
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+      video.srcObject = stream;
+      setPlaceholderVisible(placeholder, false);
+      if (!await requestVideoPlayback(video)) {
+        showError(error, 'カメラは取得できましたが、プレビューを再生できませんでした。Safariのカメラ権限を確認してください。');
+        debug('camera', 'カメラ取得成功（プレビュー再生待機）');
+      }
+    }
 
     const stopMedia = () => {
       if (localStream) localStream.getTracks().forEach((track) => track.stop());
       localStream = null;
       video.srcObject = null;
-      placeholder.hidden = false;
+      setPlaceholderVisible(placeholder, true, 'カメラプレビュー');
     };
     const resetCallControls = () => {
       startButton.disabled = false;
       endButton.disabled = true;
       micButton.disabled = true;
+      retryCameraButton.disabled = true;
       micButton.textContent = 'マイク ON';
       activeSession = null;
     };
@@ -135,22 +174,17 @@
         debug('camera', 'カメラ取得中');
         // この呼出はボタン操作から直接実行されるため、iPhone Safari の権限・自動再生制約を満たします。
         try {
-          localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStream = await getCameraStream();
+          usingEnvironmentCamera = false;
         } catch (cameraError) {
-          debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}`);
-          throw cameraError;
+          debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}（背面カメラで再試行）`);
+          localStream = await getCameraStream({ environmentOnly: true });
+          usingEnvironmentCamera = true;
         }
         debug('camera', 'カメラ取得成功');
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        video.srcObject = localStream;
-        placeholder.hidden = true;
-        if (!await requestVideoPlayback(video)) {
-          showError(error, 'カメラは取得できましたが、プレビューを再生できませんでした。Safariのカメラ権限を確認してください。');
-          debug('camera', 'カメラ取得成功（プレビュー再生待機）');
-        }
+        await showLocalPreview(localStream);
         micButton.disabled = false;
+        retryCameraButton.disabled = false;
         micButton.textContent = 'マイク ON';
 
         db = db || createFirebase();
@@ -202,6 +236,32 @@
 
     startButton.addEventListener('click', makeCall);
     endButton.addEventListener('click', () => endCall());
+    retryCameraButton.addEventListener('click', async () => {
+      retryCameraButton.disabled = true;
+      showError(error, '');
+      try {
+        debug('camera', 'カメラ再取得中（背面カメラ）');
+        const nextStream = await getCameraStream({ environmentOnly: true });
+        const previousStream = localStream;
+        localStream = nextStream;
+        usingEnvironmentCamera = true;
+        await showLocalPreview(nextStream);
+        if (peer) {
+          await Promise.all(nextStream.getTracks().map((track) => {
+            const sender = peer.getSenders().find((item) => item.track?.kind === track.kind);
+            return sender ? sender.replaceTrack(track) : Promise.resolve(peer.addTrack(track, nextStream));
+          }));
+        }
+        if (previousStream) previousStream.getTracks().forEach((track) => track.stop());
+        debug('camera', 'カメラ再取得成功（背面カメラ）');
+      } catch (cameraError) {
+        console.error(cameraError);
+        showError(error, `カメラを再取得できませんでした: ${cameraError.message}`);
+        debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}`);
+      } finally {
+        retryCameraButton.disabled = !localStream;
+      }
+    });
     micButton.addEventListener('click', () => {
       const track = localStream?.getAudioTracks()[0];
       if (!track) return;
@@ -225,6 +285,7 @@
     const memo = $('memo');
     const completeButton = $('completeButton');
     const manualPlayButton = $('manualPlayButton');
+    const reloadVideoButton = $('reloadVideoButton');
     const unmuteButton = $('unmuteButton');
     const debug = createDebugReporter($('adminDebug'));
     let db;
@@ -238,6 +299,15 @@
     let iceCandidatesReceived = 0;
     debug('signaling', '接続する呼出を選択してください');
 
+    function reportRemoteVideoMetadata() {
+      const width = remoteVideo.videoWidth;
+      const height = remoteVideo.videoHeight;
+      debug('remoteMetadata', `remoteVideo: ${width} × ${height}`);
+      debug('remoteFrame', width === 0 || height === 0 ? '映像フレーム未取得' : '表示レイヤー確認');
+      setPlaceholderVisible(remotePlaceholder, false);
+    }
+    remoteVideo.addEventListener('loadedmetadata', reportRemoteVideoMetadata);
+
     function resetViewer() {
       if (unsubscribeOfferCandidates) unsubscribeOfferCandidates();
       if (unsubscribeActiveSession) unsubscribeActiveSession();
@@ -247,9 +317,11 @@
       activeSession = null;
       remoteVideo.srcObject = null;
       remoteVideo.muted = true;
-      remotePlaceholder.hidden = false;
+      setPlaceholderVisible(remotePlaceholder, true, '接続する呼出を選択してください');
       manualPlayButton.hidden = true;
       manualPlayButton.disabled = false;
+      reloadVideoButton.hidden = true;
+      reloadVideoButton.disabled = false;
       unmuteButton.hidden = true;
       viewerTitle.textContent = '映像確認';
       viewerState.textContent = '未接続'; viewerState.dataset.state = 'idle';
@@ -271,6 +343,7 @@
       try {
         await remoteVideo.play();
         debug('playback', 'muted再生成功');
+        setPlaceholderVisible(remotePlaceholder, false);
         manualPlayButton.hidden = true;
         unmuteButton.hidden = false;
         if (manual) debug('manual', '手動再生成功');
@@ -334,7 +407,7 @@
         activeSession = ref;
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
-        remotePlaceholder.textContent = '映像を接続しています…'; remotePlaceholder.hidden = false;
+        setPlaceholderVisible(remotePlaceholder, true, '映像を接続しています…');
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         peer.addTransceiver('video', { direction: 'recvonly' }); peer.addTransceiver('audio', { direction: 'recvonly' });
         peer.ontrack = (event) => {
@@ -344,7 +417,8 @@
           remoteVideo.muted = true;
           remoteVideo.autoplay = true;
           remoteVideo.playsInline = true;
-          remotePlaceholder.hidden = true;
+          setPlaceholderVisible(remotePlaceholder, false);
+          reloadVideoButton.hidden = false;
           debug('remote', 'remote stream受信');
           if (event.track.kind === 'video') playRemoteVideo();
         };
@@ -383,6 +457,19 @@
     callList.addEventListener('click', (event) => { const button = event.target.closest('[data-connect]'); if (button) connect(button.dataset.connect); });
     completeButton.addEventListener('click', complete);
     manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });
+    reloadVideoButton.addEventListener('click', () => {
+      const stream = remoteVideo.srcObject;
+      if (!stream) { showError(error, '再読み込みできる映像ストリームがありません。'); return; }
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+      remoteVideo.srcObject = stream;
+      remoteVideo.muted = true;
+      remoteVideo.autoplay = true;
+      remoteVideo.playsInline = true;
+      setPlaceholderVisible(remotePlaceholder, false);
+      debug('remote', '映像を再読み込み');
+      playRemoteVideo({ manual: true });
+    });
     unmuteButton.addEventListener('click', async () => {
       remoteVideo.muted = false;
       try { await remoteVideo.play(); } catch (playError) { console.warn('音声付き再生を開始できませんでした', playError); }

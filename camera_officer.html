@@ -32,7 +32,7 @@
     </section>
 
     <section class="camera-preview-wrap" aria-label="カメラプレビュー">
-      <video id="localVideo" class="camera-video camera-local-video" autoplay playsinline muted></video>
+      <video id="localVideo" class="camera-video camera-local-video" autoplay playsinline muted controls></video>
       <div id="previewPlaceholder" class="camera-video-placeholder">カメラプレビュー</div>
       <span class="camera-live-badge">LIVE</span>
     </section>
@@ -49,6 +49,7 @@
     <div class="officer-actions">
       <button id="startCallButton" class="camera-button camera-button-primary" type="button">本部へ映像共有</button>
       <div class="officer-secondary-actions">
+        <button id="retryCameraButton" class="camera-button camera-button-secondary" type="button" disabled>カメラ再取得</button>
         <button id="micButton" class="camera-button camera-button-secondary" type="button" disabled>マイク ON</button>
         <button id="endCallButton" class="camera-button camera-button-danger" type="button" disabled>終了</button>
       </div>
