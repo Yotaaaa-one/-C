@@ -69,6 +69,7 @@ button { cursor: pointer; }
 .camera-card-meta { color: var(--camera-muted); font-size: .8rem; }.camera-call-card .camera-button { min-height: 41px; }
 .camera-viewer-column { display: grid; gap: 18px; }.camera-viewer-panel { padding: 18px; }.camera-remote-wrap { aspect-ratio: 16 / 9; margin-top: 14px; }.camera-state-badge { border-radius: 99px; padding: 5px 9px; color: var(--camera-muted); background: #e6edf1; font-size: .76rem; font-weight: 800; }.camera-state-badge[data-state="connected"] { color: #fff; background: var(--camera-green); }.camera-state-badge[data-state="calling"] { color: #734600; background: #ffdc9d; }
 .camera-memo-panel { display: grid; gap: 13px; }
+.camera-video-actions { display: flex; justify-content: center; gap: 10px; margin-top: 12px; }.camera-video-actions .camera-button { min-width: 145px; }
 
 @media (max-width: 760px) { .camera-admin-shell { width: min(100% - 28px, 680px); padding-top: 20px; }.camera-admin-header, .camera-admin-layout { display: grid; }.camera-admin-header { gap: 4px; }.camera-admin-header .camera-status { margin: 0; }.camera-admin-layout { grid-template-columns: 1fr; }.camera-sidebar { grid-template-columns: 1fr; }.camera-remote-wrap { aspect-ratio: 4 / 3; } }
 @media (max-width: 380px) { .camera-field-grid, .officer-secondary-actions { grid-template-columns: 1fr; }.camera-field-wide { grid-column: auto; } }

@@ -224,6 +224,8 @@
     const viewerState = $('viewerState');
     const memo = $('memo');
     const completeButton = $('completeButton');
+    const manualPlayButton = $('manualPlayButton');
+    const unmuteButton = $('unmuteButton');
     const debug = createDebugReporter($('adminDebug'));
     let db;
     let activeTournamentId;
@@ -244,7 +246,11 @@
       iceCandidatesReceived = 0;
       activeSession = null;
       remoteVideo.srcObject = null;
+      remoteVideo.muted = true;
       remotePlaceholder.hidden = false;
+      manualPlayButton.hidden = true;
+      manualPlayButton.disabled = false;
+      unmuteButton.hidden = true;
       viewerTitle.textContent = '映像確認';
       viewerState.textContent = '未接続'; viewerState.dataset.state = 'idle';
       memo.value = ''; completeButton.disabled = true;
@@ -252,6 +258,33 @@
       debug('answer', 'answer未作成');
       debug('ice', 'ICE候補待機中');
       debug('remote', 'remote stream待機中');
+      debug('playback', 'muted再生待機中');
+      debug('manual', '手動再生不要');
+      debug('audio', '音声OFF');
+    }
+    async function playRemoteVideo({ manual = false } = {}) {
+      // 映像を優先するため、常に muted 状態から再生を開始します。
+      remoteVideo.muted = true;
+      remoteVideo.autoplay = true;
+      remoteVideo.playsInline = true;
+      debug('playback', 'muted再生試行');
+      try {
+        await remoteVideo.play();
+        debug('playback', 'muted再生成功');
+        manualPlayButton.hidden = true;
+        unmuteButton.hidden = false;
+        if (manual) debug('manual', '手動再生成功');
+        return true;
+      } catch (playError) {
+        console.warn('リモート映像の再生がブロックされました', playError);
+        debug('playback', 'muted再生失敗');
+        manualPlayButton.hidden = false;
+        manualPlayButton.disabled = false;
+        debug('manual', '手動再生ボタン表示');
+        // WebRTC接続は閉じず、警告と手動操作だけを表示します。
+        showError(error, '映像ストリームは受信しましたが再生できませんでした。ブラウザの自動再生設定を確認してください。「映像を表示」を押してください。');
+        return false;
+      }
     }
     function renderCalls(sessions) {
       const displaySessions = sessions.filter((item) => item.status === 'calling' || item.status === 'connected').sort((a, b) => {
@@ -303,20 +336,17 @@
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
         remotePlaceholder.textContent = '映像を接続しています…'; remotePlaceholder.hidden = false;
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-        // 初期は muted 属性で自動再生可能にし、PC本部では接続時に音声再生も試みます。
-        remoteVideo.muted = false;
         peer.addTransceiver('video', { direction: 'recvonly' }); peer.addTransceiver('audio', { direction: 'recvonly' });
         peer.ontrack = (event) => {
           const stream = event.streams[0] || new MediaStream([event.track]);
           // WebRTC受信ストリームを必ず video 要素に設定します。
           remoteVideo.srcObject = stream;
+          remoteVideo.muted = true;
           remoteVideo.autoplay = true;
           remoteVideo.playsInline = true;
           remotePlaceholder.hidden = true;
-          requestVideoPlayback(remoteVideo, { mutedFallback: true }).then((started) => {
-            debug('remote', started ? 'remote stream受信' : 'remote stream受信（再生待機）');
-            if (!started) showError(error, '映像ストリームは受信しましたが再生できませんでした。ブラウザの自動再生設定を確認してください。');
-          });
+          debug('remote', 'remote stream受信');
+          if (event.track.kind === 'video') playRemoteVideo();
         };
         peer.onicecandidate = (event) => { if (event.candidate) ref.collection('answerCandidates').add(event.candidate.toJSON()).catch(console.warn); };
         peer.onconnectionstatechange = () => {
@@ -352,6 +382,12 @@
     tournamentInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') watchCalls(); });
     callList.addEventListener('click', (event) => { const button = event.target.closest('[data-connect]'); if (button) connect(button.dataset.connect); });
     completeButton.addEventListener('click', complete);
+    manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });
+    unmuteButton.addEventListener('click', async () => {
+      remoteVideo.muted = false;
+      try { await remoteVideo.play(); } catch (playError) { console.warn('音声付き再生を開始できませんでした', playError); }
+      debug('audio', '音声ON');
+    });
   }
 
   document.addEventListener('DOMContentLoaded', () => { if (isOfficerPage) startOfficer(); else startAdmin(); });
