@@ -38,6 +38,33 @@
 
   function showError(element, message) { element.textContent = message; element.hidden = !message; }
   function setStatus(element, message, tone = 'idle') { element.textContent = message; element.dataset.tone = tone; }
+  function createDebugReporter(element) {
+    const states = new Map();
+    return (key, message) => {
+      states.set(key, message);
+      element.replaceChildren();
+      states.forEach((text) => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        element.append(item);
+      });
+    };
+  }
+  function requestVideoPlayback(video, { mutedFallback = false } = {}) {
+    const play = async () => {
+      try {
+        await video.play();
+        return true;
+      } catch (error) {
+        if (!mutedFallback || video.muted) return false;
+        video.muted = true;
+        try { await video.play(); return true; } catch (_) { return false; }
+      }
+    };
+    // iPhone Safari は srcObject 設定直後より metadata 読込後の play() が安定します。
+    video.addEventListener('loadedmetadata', () => { play(); }, { once: true });
+    return play();
+  }
 
   async function startOfficer() {
     const tournamentInput = $('tournamentId');
@@ -51,12 +78,15 @@
     const error = $('cameraError');
     const video = $('localVideo');
     const placeholder = $('previewPlaceholder');
+    const debug = createDebugReporter($('officerDebug'));
     let db;
     let localStream;
     let peer;
     let activeSession;
     let unsubscribeSession;
     let unsubscribeAnswerCandidates;
+    debug('camera', 'カメラ取得待機中');
+    debug('hq', '本部未接続');
 
     const stopMedia = () => {
       if (localStream) localStream.getTracks().forEach((track) => track.stop());
@@ -100,16 +130,30 @@
         showError(error, '大会ID、競技委員名、ホール番号、組番号をすべて入力してください。'); return;
       }
       try {
-        db = db || createFirebase();
         startButton.disabled = true;
         setStatus(status, 'カメラを起動しています…', 'calling');
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true
-        });
+        debug('camera', 'カメラ取得中');
+        // この呼出はボタン操作から直接実行されるため、iPhone Safari の権限・自動再生制約を満たします。
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (cameraError) {
+          debug('camera', `カメラ取得失敗: ${cameraError.name || cameraError.message}`);
+          throw cameraError;
+        }
+        debug('camera', 'カメラ取得成功');
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
         video.srcObject = localStream;
         placeholder.hidden = true;
+        if (!await requestVideoPlayback(video)) {
+          showError(error, 'カメラは取得できましたが、プレビューを再生できませんでした。Safariのカメラ権限を確認してください。');
+          debug('camera', 'カメラ取得成功（プレビュー再生待機）');
+        }
         micButton.disabled = false;
         micButton.textContent = 'マイク ON';
+
+        db = db || createFirebase();
 
         const sessions = db.collection('tournaments').doc(tournamentId).collection('camera_sessions');
         activeSession = sessions.doc();
@@ -122,13 +166,14 @@
           if (event.candidate) activeSession.collection('offerCandidates').add(event.candidate.toJSON()).catch(console.warn);
         };
         peer.onconnectionstatechange = () => {
-          if (peer?.connectionState === 'connected') setStatus(status, '本部と接続中', 'connected');
+          if (peer?.connectionState === 'connected') { setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み'); }
           if (['failed', 'disconnected'].includes(peer?.connectionState)) setStatus(status, '接続が切れました。本部を待機中です。', 'calling');
         };
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
         await activeSession.update({ offer: { type: offer.type, sdp: offer.sdp } });
         setStatus(status, '本部の応答を待っています', 'calling');
+        debug('hq', '本部接続中');
         endButton.disabled = false;
 
         unsubscribeAnswerCandidates = activeSession.collection('answerCandidates').onSnapshot((snapshot) => {
@@ -140,7 +185,7 @@
           const data = snapshot.data();
           if (!data || !peer) return;
           if (data.answer && !peer.currentRemoteDescription) peer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch((err) => showError(error, `本部への接続に失敗しました: ${err.message}`));
-          if (data.status === 'connected') setStatus(status, '本部と接続中', 'connected');
+          if (data.status === 'connected') { setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み'); }
           if (data.status === 'ended') {
             finishLocalCall();
             setStatus(status, '本部側で対応完了になりました');
@@ -149,6 +194,7 @@
       } catch (err) {
         console.error(err);
         showError(error, `映像共有を開始できませんでした: ${err.message}`);
+        if (!localStream) debug('camera', `カメラ取得失敗: ${err.name || err.message}`);
         finishLocalCall();
         setStatus(status, '開始できませんでした', 'error');
       }
@@ -178,6 +224,7 @@
     const viewerState = $('viewerState');
     const memo = $('memo');
     const completeButton = $('completeButton');
+    const debug = createDebugReporter($('adminDebug'));
     let db;
     let activeTournamentId;
     let activeSession;
@@ -186,18 +233,25 @@
     let unsubscribeOfferCandidates;
     let unsubscribeActiveSession;
     let queuedCandidates = [];
+    let iceCandidatesReceived = 0;
+    debug('signaling', '接続する呼出を選択してください');
 
     function resetViewer() {
       if (unsubscribeOfferCandidates) unsubscribeOfferCandidates();
       if (unsubscribeActiveSession) unsubscribeActiveSession();
       unsubscribeOfferCandidates = null; unsubscribeActiveSession = null;
       closePeer(peer); peer = null; queuedCandidates = [];
+      iceCandidatesReceived = 0;
       activeSession = null;
       remoteVideo.srcObject = null;
       remotePlaceholder.hidden = false;
       viewerTitle.textContent = '映像確認';
       viewerState.textContent = '未接続'; viewerState.dataset.state = 'idle';
       memo.value = ''; completeButton.disabled = true;
+      debug('offer', 'offer未受信');
+      debug('answer', 'answer未作成');
+      debug('ice', 'ICE候補待機中');
+      debug('remote', 'remote stream待機中');
     }
     function renderCalls(sessions) {
       const displaySessions = sessions.filter((item) => item.status === 'calling' || item.status === 'connected').sort((a, b) => {
@@ -229,6 +283,8 @@
       } catch (err) { showError(error, err.message); setStatus(status, 'Firebase設定エラー', 'error'); }
     }
     async function addOrQueueCandidate(candidate) {
+      iceCandidatesReceived += 1;
+      debug('ice', `ICE候補受信: ${iceCandidatesReceived}件`);
       if (!peer?.remoteDescription) { queuedCandidates.push(candidate); return; }
       await peer.addIceCandidate(new RTCIceCandidate(candidate));
     }
@@ -241,13 +297,27 @@
         if (!snapshot.exists || snapshot.data().status === 'ended') throw new Error('この呼出は終了しています。');
         const data = snapshot.data();
         if (!data.offer) throw new Error('競技委員側の接続準備を待っています。数秒後にもう一度お試しください。');
+        debug('offer', 'offer受信');
         activeSession = ref;
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
         remotePlaceholder.textContent = '映像を接続しています…'; remotePlaceholder.hidden = false;
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        // 初期は muted 属性で自動再生可能にし、PC本部では接続時に音声再生も試みます。
+        remoteVideo.muted = false;
         peer.addTransceiver('video', { direction: 'recvonly' }); peer.addTransceiver('audio', { direction: 'recvonly' });
-        peer.ontrack = (event) => { remoteVideo.srcObject = event.streams[0]; remotePlaceholder.hidden = true; };
+        peer.ontrack = (event) => {
+          const stream = event.streams[0] || new MediaStream([event.track]);
+          // WebRTC受信ストリームを必ず video 要素に設定します。
+          remoteVideo.srcObject = stream;
+          remoteVideo.autoplay = true;
+          remoteVideo.playsInline = true;
+          remotePlaceholder.hidden = true;
+          requestVideoPlayback(remoteVideo, { mutedFallback: true }).then((started) => {
+            debug('remote', started ? 'remote stream受信' : 'remote stream受信（再生待機）');
+            if (!started) showError(error, '映像ストリームは受信しましたが再生できませんでした。ブラウザの自動再生設定を確認してください。');
+          });
+        };
         peer.onicecandidate = (event) => { if (event.candidate) ref.collection('answerCandidates').add(event.candidate.toJSON()).catch(console.warn); };
         peer.onconnectionstatechange = () => {
           if (peer?.connectionState === 'connected') { viewerState.textContent = '接続中'; viewerState.dataset.state = 'connected'; setStatus(status, '映像を確認中', 'connected'); }
@@ -260,6 +330,7 @@
           candidateSnapshot.docChanges().forEach((change) => { if (change.type === 'added') addOrQueueCandidate(change.doc.data()).catch(console.warn); });
         });
         const answer = await peer.createAnswer(); await peer.setLocalDescription(answer);
+        debug('answer', 'answer作成');
         await ref.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'connected', connectedAt: serverTime(), hqUser: 'HQ' });
         memo.value = data.memo || '';
         completeButton.disabled = false;

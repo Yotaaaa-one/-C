@@ -45,6 +45,8 @@ button { cursor: pointer; }
 .camera-status[data-tone="connected"] { color: var(--camera-green); }.camera-status[data-tone="connected"]::before { background: #13a17f; }
 .camera-status[data-tone="error"] { color: var(--camera-red); }.camera-status[data-tone="error"]::before { background: var(--camera-red); }
 .camera-error { margin: -5px 0 14px; color: var(--camera-red); font-size: .88rem; font-weight: 700; }
+.camera-debug { margin-top: 12px; border: 1px solid #cbd9e2; border-radius: 9px; padding: 10px 12px; color: #395061; background: #f7fafc; font-size: .78rem; }
+.camera-debug-title { margin: 0 0 5px; color: var(--camera-navy); font-weight: 800; }.camera-debug-list { display: grid; gap: 3px; margin: 0; padding-left: 18px; }.camera-debug-list li { line-height: 1.35; }
 
 .officer-actions { display: grid; gap: 11px; }
 .officer-secondary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }

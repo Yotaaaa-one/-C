@@ -42,10 +42,16 @@
             <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
           </div>
           <div class="camera-remote-wrap">
-            <video id="remoteVideo" class="camera-video camera-remote-video" playsinline autoplay></video>
+            <video id="remoteVideo" class="camera-video camera-remote-video" autoplay playsinline muted></video>
             <div id="remotePlaceholder" class="camera-video-placeholder">接続する呼出を選択してください</div>
           </div>
           <p id="adminError" class="camera-error" role="alert" hidden></p>
+          <section class="camera-debug" aria-label="WebRTCデバッグ">
+            <p class="camera-debug-title">WebRTC デバッグ</p>
+            <ul id="adminDebug" class="camera-debug-list" aria-live="polite">
+              <li>接続する呼出を選択してください</li>
+            </ul>
+          </section>
         </section>
 
         <section class="camera-panel camera-memo-panel">

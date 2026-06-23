@@ -32,13 +32,19 @@
     </section>
 
     <section class="camera-preview-wrap" aria-label="カメラプレビュー">
-      <video id="localVideo" class="camera-video camera-local-video" playsinline muted></video>
+      <video id="localVideo" class="camera-video camera-local-video" autoplay playsinline muted></video>
       <div id="previewPlaceholder" class="camera-video-placeholder">カメラプレビュー</div>
       <span class="camera-live-badge">LIVE</span>
     </section>
 
     <p id="connectionStatus" class="camera-status" role="status" data-tone="idle">準備中</p>
     <p id="cameraError" class="camera-error" role="alert" hidden></p>
+    <section class="camera-debug" aria-label="接続デバッグ">
+      <p class="camera-debug-title">接続デバッグ</p>
+      <ul id="officerDebug" class="camera-debug-list" aria-live="polite">
+        <li>待機中</li>
+      </ul>
+    </section>
 
     <div class="officer-actions">
       <button id="startCallButton" class="camera-button camera-button-primary" type="button">本部へ映像共有</button>
