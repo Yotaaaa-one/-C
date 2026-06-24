@@ -617,6 +617,10 @@
     const saveRosterButton = $('saveRosterButton');
     const cancelRosterEditButton = $('cancelRosterEditButton');
     const rosterList = $('rosterList');
+    const rosterCsvInput = $('rosterCsvInput');
+    const importRosterButton = $('importRosterButton');
+    const exportRosterButton = $('exportRosterButton');
+    const rosterCsvResult = $('rosterCsvResult');
     const assignmentRosterList = $('assignmentRosterList');
     const assignmentWarning = $('assignmentWarning');
     const saveAssignmentsButton = $('saveAssignmentsButton');
@@ -724,6 +728,147 @@
         await ref.set(data, { merge: true });
         resetRosterEditor();
       } catch (rosterError) { showError(error, `ロースターを保存できませんでした: ${rosterError.message}`); }
+    }
+    function setCsvResult(message, tone = '') {
+      rosterCsvResult.textContent = message;
+      rosterCsvResult.dataset.tone = tone;
+    }
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let quoted = false;
+      const source = text.replace(/^\uFEFF/, '');
+      for (let index = 0; index < source.length; index += 1) {
+        const character = source[index];
+        if (quoted) {
+          if (character === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
+          else if (character === '"') quoted = false;
+          else field += character;
+          continue;
+        }
+        if (character === '"') { quoted = true; continue; }
+        if (character === ',') { row.push(field); field = ''; continue; }
+        if (character === '\n') { row.push(field.replace(/\r$/, '')); rows.push(row); row = []; field = ''; continue; }
+        field += character;
+      }
+      if (quoted) throw new Error('CSVの引用符が閉じられていません。');
+      if (field || row.length) { row.push(field.replace(/\r$/, '')); rows.push(row); }
+      return rows;
+    }
+    function normalizeHeader(value) {
+      return String(value || '').trim().replace(/^\uFEFF/, '').toLowerCase().replace(/[\s_－-]/g, '');
+    }
+    function normalizeCategory(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (['specialist', '専門', '専門競技委員'].includes(normalized)) return 'specialist';
+      if (['registered', '登録', '登録競技委員'].includes(normalized)) return 'registered';
+      return null;
+    }
+    function normalizeActive(value) {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (!normalized) return true;
+      if (['true', '1', '有効', 'active'].includes(normalized)) return true;
+      if (['false', '0', '停止', 'inactive'].includes(normalized)) return false;
+      return null;
+    }
+    function makeSafeRosterId(value, usedIds) {
+      let base = String(value || '').trim().normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!base) base = 'officer';
+      let candidate = base;
+      let counter = 2;
+      while (usedIds.has(candidate)) { candidate = `${base}-${counter}`; counter += 1; }
+      usedIds.add(candidate);
+      return candidate;
+    }
+    function csvEscape(value) {
+      const text = String(value ?? '');
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+    async function importRosterCsv(file) {
+      if (!file) return;
+      setCsvResult('CSVを読み込んでいます…');
+      importRosterButton.disabled = true;
+      try {
+        db = db || createFirebase();
+        const rows = parseCsv(await file.text());
+        if (!rows.length) throw new Error('CSVが空です。');
+        const headers = rows[0].map(normalizeHeader);
+        const headerIndex = {
+          officerId: headers.findIndex((header) => ['officerid', '競技委員id'].includes(header)),
+          officerName: headers.findIndex((header) => ['officername', '競技委員名'].includes(header)),
+          category: headers.findIndex((header) => ['category', '区分', 'カテゴリ'].includes(header)),
+          active: headers.findIndex((header) => ['active', '有効', '状態'].includes(header)),
+          note: headers.findIndex((header) => ['note', 'メモ', '備考'].includes(header))
+        };
+        if (headerIndex.officerName < 0 || headerIndex.category < 0) throw new Error('ヘッダーに officerName と category が必要です。');
+        const existingSnapshot = await db.collection('camera_roster').get();
+        const existing = new Map(existingSnapshot.docs.map((doc) => [doc.id, doc.data()]));
+        const usedIds = new Set(existing.keys());
+        const csvIds = new Set();
+        const records = [];
+        const errors = [];
+        rows.slice(1).forEach((columns, rowOffset) => {
+          const line = rowOffset + 2;
+          const get = (key) => headerIndex[key] >= 0 ? String(columns[headerIndex[key]] ?? '').trim() : '';
+          const officerName = get('officerName');
+          const category = normalizeCategory(get('category'));
+          const active = normalizeActive(get('active'));
+          const suppliedId = get('officerId');
+          if (!columns.some((column) => String(column).trim())) return;
+          if (!officerName) { errors.push(`${line}行目: officerName が空です。`); return; }
+          if (!category) { errors.push(`${line}行目: category を specialist / registered / 専門 / 登録 にしてください。`); return; }
+          if (active === null) { errors.push(`${line}行目: active を true/false、1/0、有効/停止にしてください。`); return; }
+          if (suppliedId && /[\/\u0000-\u001F]/.test(suppliedId)) { errors.push(`${line}行目: officerId に使用できない文字があります。`); return; }
+          const officerId = suppliedId || makeSafeRosterId(officerName, usedIds);
+          if (csvIds.has(officerId)) { errors.push(`${line}行目: officerId ${officerId} がCSV内で重複しています。`); return; }
+          csvIds.add(officerId);
+          if (suppliedId) usedIds.add(officerId);
+          records.push({ officerId, officerName, category, active, note: get('note'), line, isExisting: existing.has(officerId) });
+        });
+        let added = 0;
+        let updated = 0;
+        for (let start = 0; start < records.length; start += 20) {
+          const results = await Promise.all(records.slice(start, start + 20).map(async (record) => {
+            const data = { officerId: record.officerId, officerName: record.officerName, category: record.category, active: record.active, note: record.note, updatedAt: serverTime() };
+            if (!record.isExisting) data.createdAt = serverTime();
+            try {
+              await db.collection('camera_roster').doc(record.officerId).set(data, { merge: true });
+              return record;
+            } catch (writeError) {
+              errors.push(`${record.line}行目: 保存できませんでした（${writeError.message}）。`);
+              return null;
+            }
+          }));
+          results.filter(Boolean).forEach((record) => { if (record.isExisting) updated += 1; else added += 1; });
+        }
+        const errorDetail = errors.length ? `\nエラー ${errors.length}件: ${errors.slice(0, 10).join(' / ')}${errors.length > 10 ? ' …' : ''}` : '';
+        setCsvResult(`CSVインポート完了: 追加 ${added}件 / 更新 ${updated}件 / エラー ${errors.length}件${errorDetail}`, errors.length ? 'error' : 'success');
+      } catch (csvError) {
+        setCsvResult(`CSVインポートに失敗しました: ${csvError.message}`, 'error');
+      } finally {
+        rosterCsvInput.value = '';
+        importRosterButton.disabled = false;
+      }
+    }
+    function exportRosterCsv() {
+      const rows = [['officerId', 'officerName', 'category', 'active', 'note']];
+      [...rosterCache].sort((a, b) => (a.officerId || a.id).localeCompare(b.officerId || b.id)).forEach((officer) => {
+        rows.push([officer.officerId || officer.id, officer.officerName || '', officer.category || 'registered', officer.active === false ? 'false' : 'true', officer.note || '']);
+      });
+      const csv = `\uFEFF${rows.map((row) => row.map(csvEscape).join(',')).join('\r\n')}\r\n`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const date = new Date();
+      const ymd = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+      anchor.href = url;
+      anchor.download = `ruling_eye_roster_${ymd}.csv`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setCsvResult(`CSVをエクスポートしました: ${rows.length - 1}件`, 'success');
     }
     async function saveAssignments() {
       if (!db || !activeTournamentId) return;
@@ -1042,6 +1187,9 @@
     sendRequestButton.addEventListener('click', sendHqRequest);
     saveRosterButton.addEventListener('click', saveRoster);
     cancelRosterEditButton.addEventListener('click', resetRosterEditor);
+    importRosterButton.addEventListener('click', () => rosterCsvInput.click());
+    rosterCsvInput.addEventListener('change', () => importRosterCsv(rosterCsvInput.files?.[0]));
+    exportRosterButton.addEventListener('click', exportRosterCsv);
     rosterList.addEventListener('click', async (event) => {
       const editButton = event.target.closest('[data-edit-roster]');
       const toggleButton = event.target.closest('[data-toggle-roster]');

@@ -31,6 +31,15 @@
           <select id="rosterCategory"><option value="specialist">専門競技委員</option><option value="registered">登録競技委員</option></select>
           <input id="rosterNote" type="text" placeholder="メモ（任意）">
           <div class="camera-wait-actions"><button id="saveRosterButton" class="camera-button camera-button-primary" type="button">ロースターへ追加</button><button id="cancelRosterEditButton" class="camera-button camera-button-secondary" type="button" hidden>編集取消</button></div>
+          <div class="camera-csv-actions">
+            <input id="rosterCsvInput" type="file" accept=".csv,text/csv" hidden>
+            <button id="importRosterButton" class="camera-button camera-button-secondary" type="button">CSVインポート</button>
+            <button id="exportRosterButton" class="camera-button camera-button-secondary" type="button">CSVエクスポート</button>
+          </div>
+          <p id="rosterCsvResult" class="camera-csv-result" aria-live="polite">CSV形式: officerId,officerName,category,active,note</p>
+          <details class="camera-csv-sample"><summary>CSV形式サンプル</summary><pre>officerId,officerName,category,active,note
+sp001,専門競技委員A,specialist,true,専門競技委員
+rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
           <div id="rosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
         </section>
         <section class="camera-panel assignment-panel" aria-label="大会用ロースター選抜">
