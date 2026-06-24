@@ -127,6 +127,10 @@
     const incomingCallReason = $('incomingCallReason');
     const acceptCallButton = $('acceptCallButton');
     const declineCallButton = $('declineCallButton');
+    const deviceNoSelect = $('deviceNoSelect');
+    const saveDeviceButton = $('saveDeviceButton');
+    const checkAssignmentButton = $('checkAssignmentButton');
+    const assignmentDisplay = $('assignmentDisplay');
     const status = $('connectionStatus');
     const error = $('cameraError');
     const video = $('localVideo');
@@ -147,6 +151,9 @@
     let unsubscribeIncomingCalls;
     let incomingCall;
     let activeCallRef;
+    let assignmentRef;
+    let assignmentData;
+    let deviceNo = (() => { try { return localStorage.getItem('ruling-eye-device-no') || '1'; } catch (_) { return '1'; } })();
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
 
@@ -170,9 +177,39 @@
       startWaitingButton.disabled = online || busy;
       stopWaitingButton.disabled = !online;
     }
+    function assignedOfficerId() { return assignmentData?.officerId || officerId; }
+    function assignedOfficerName() { return assignmentData?.officerName || nameInput.value.trim(); }
+    function assignmentStatusDisplay(message, tone = '') {
+      assignmentDisplay.textContent = message;
+      assignmentDisplay.dataset.tone = tone;
+    }
+    async function loadAssignment() {
+      const tournamentId = cleanTournamentId(tournamentInput.value);
+      assignmentData = null;
+      assignmentRef = null;
+      if (!tournamentId) { assignmentStatusDisplay('大会IDを入力して割当確認してください。'); return null; }
+      try {
+        db = db || createFirebase();
+        const snapshot = await db.collection('tournaments').doc(tournamentId).collection('camera_assignments').where('deviceNo', '==', String(deviceNo)).get();
+        const assignmentDoc = snapshot.docs[0];
+        if (!assignmentDoc) {
+          assignmentStatusDisplay(`この端末（iPhone No.${deviceNo}）は本大会に割り当てられていません。`, 'error');
+          return null;
+        }
+        assignmentRef = assignmentDoc.ref;
+        assignmentData = { id: assignmentDoc.id, ...assignmentDoc.data() };
+        nameInput.value = assignmentData.officerName || nameInput.value;
+        assignmentStatusDisplay(`この端末: iPhone No.${deviceNo} / 本日の担当: ${assignmentData.officerName || '未設定'}（${assignmentData.category === 'specialist' ? '専門競技委員' : '登録競技委員'}）`);
+        return assignmentData;
+      } catch (assignmentError) {
+        showError(error, `大会割当を確認できませんでした: ${assignmentError.message}`);
+        return null;
+      }
+    }
     async function updateOfficerStatus(status, extra = {}) {
       if (!officerRef) return;
       await officerRef.set({ status, lastSeen: serverTime(), updatedAt: serverTime(), ...extra }, { merge: true });
+      if (assignmentRef) await assignmentRef.set({ status, lastSeen: serverTime(), updatedAt: serverTime(), ...extra }, { merge: true });
       setWaitingUi(status);
     }
     function hideIncomingCall() {
@@ -188,7 +225,9 @@
     }
     async function startWaiting() {
       const tournamentId = cleanTournamentId(tournamentInput.value);
-      const officerName = nameInput.value.trim();
+      await loadAssignment();
+      const officerName = assignedOfficerName();
+      const effectiveOfficerId = assignedOfficerId();
       showError(error, '');
       if (!tournamentId || !officerName) {
         showError(error, '待機開始には大会IDと競技委員名を入力してください。');
@@ -199,21 +238,21 @@
         if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
         if (waitingHeartbeat) clearInterval(waitingHeartbeat);
         waitingTournamentId = tournamentId;
-        officerRef = db.collection('tournaments').doc(tournamentId).collection('camera_officers').doc(officerId);
+        officerRef = db.collection('tournaments').doc(tournamentId).collection('camera_officers').doc(effectiveOfficerId);
         const existingOfficer = await officerRef.get();
         const officerData = {
-          officerId, officerName, status: activeSession ? 'busy' : 'online', currentSessionId: activeSession?.id || '',
+          officerId: effectiveOfficerId, officerName, deviceNo: String(deviceNo), assignmentId: assignmentData?.id || '', status: activeSession ? 'busy' : 'online', currentSessionId: activeSession?.id || '',
           qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, lastSeen: serverTime(),
           updatedAt: serverTime(), deviceType: deviceType()
         };
         if (!existingOfficer.exists) officerData.createdAt = serverTime();
         await officerRef.set(officerData, { merge: true });
-        setWaitingUi(activeSession ? 'busy' : 'online');
+        await updateOfficerStatus(activeSession ? 'busy' : 'online', { currentSessionId: activeSession?.id || '', qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, deviceNo: String(deviceNo), assignmentId: assignmentData?.id || '' });
         waitingHeartbeat = setInterval(() => {
           updateOfficerStatus(activeSession ? 'busy' : 'online', { currentSessionId: activeSession?.id || '', qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label }).catch(console.warn);
         }, 25000);
-        unsubscribeIncomingCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').where('targetOfficerId', '==', officerId).onSnapshot((snapshot) => {
-          const requested = snapshot.docs.map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() })).filter((call) => call.status === 'requested');
+        unsubscribeIncomingCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').onSnapshot((snapshot) => {
+          const requested = snapshot.docs.map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() })).filter((call) => call.status === 'requested' && (call.targetOfficerId === effectiveOfficerId || String(call.deviceNo || '') === String(deviceNo)));
           if (requested.length) showIncomingCall(requested.sort((a, b) => (a.requestedAt?.toMillis?.() || 0) - (b.requestedAt?.toMillis?.() || 0))[0]);
           else if (!activeSession) hideIncomingCall();
         }, (listenError) => showError(error, `本部呼出を受信できませんでした: ${listenError.message}`));
@@ -248,6 +287,7 @@
       const writes = [];
       if (activeSession) writes.push(activeSession.update(data));
       if (officerRef) writes.push(officerRef.update({ qualityMode: data.qualityMode, qualityLabel: data.qualityLabel, lastSeen: serverTime(), updatedAt: serverTime() }));
+      if (assignmentRef) writes.push(assignmentRef.update({ qualityMode: data.qualityMode, qualityLabel: data.qualityLabel, lastSeen: serverTime(), updatedAt: serverTime() }));
       try { await Promise.all(writes); } catch (saveError) { console.warn('画質情報を保存できませんでした', saveError); }
     }
 
@@ -372,7 +412,8 @@
 
     async function makeCall(hqCall = null) {
       const tournamentId = cleanTournamentId(tournamentInput.value);
-      const officerName = hqCall?.targetOfficerName || nameInput.value.trim();
+      const officerName = hqCall?.targetOfficerName || assignedOfficerName();
+      const effectiveOfficerId = assignedOfficerId();
       const hole = String(hqCall?.hole || holeInput.value.trim());
       const groupNo = String(hqCall?.groupNo || groupInput.value.trim());
       showError(error, '');
@@ -399,8 +440,8 @@
         const roomId = activeSession.id;
         activeCallRef = hqCall?.ref || null;
         const sessionData = {
-          officerId, officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null,
-          memo: '', hqUser: '', callId: hqCall?.id || '', requestMode: hqCall ? 'hq_to_officer' : 'officer_manual', reason: hqCall?.reason || '', ...currentQualityData()
+          officerId: effectiveOfficerId, officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null,
+          memo: '', hqUser: '', callId: hqCall?.id || '', requestMode: hqCall ? 'hq_to_officer' : 'officer_manual', reason: hqCall?.reason || '', deviceNo: String(deviceNo), assignmentId: assignmentData?.id || hqCall?.assignmentId || '', ...currentQualityData()
         };
         if (activeCallRef) {
           const batch = db.batch();
@@ -468,6 +509,15 @@
 
     startButton.addEventListener('click', () => { makeCall(); });
     endButton.addEventListener('click', () => endCall());
+    deviceNoSelect.value = String(deviceNo);
+    saveDeviceButton.addEventListener('click', () => {
+      deviceNo = String(deviceNoSelect.value);
+      try { localStorage.setItem('ruling-eye-device-no', deviceNo); } catch (_) { /* private mode fallback */ }
+      assignmentData = null; assignmentRef = null;
+      assignmentStatusDisplay(`この端末を iPhone No.${deviceNo} に設定しました。大会IDを入力して割当確認してください。`);
+    });
+    checkAssignmentButton.addEventListener('click', loadAssignment);
+    tournamentInput.addEventListener('change', () => { if (tournamentInput.value.trim()) loadAssignment(); });
     startWaitingButton.addEventListener('click', startWaiting);
     stopWaitingButton.addEventListener('click', stopWaiting);
     acceptCallButton.addEventListener('click', async () => {
@@ -544,6 +594,7 @@
     window.addEventListener('pagehide', () => {
       if (activeSession) activeSession.update({ status: 'ended', endedAt: serverTime() });
       if (officerRef) officerRef.update({ status: 'offline', lastSeen: serverTime(), updatedAt: serverTime() }).catch(() => {});
+      if (assignmentRef) assignmentRef.update({ status: 'offline', lastSeen: serverTime(), updatedAt: serverTime() }).catch(() => {});
     });
   }
 
@@ -560,6 +611,15 @@
     const requestReason = $('requestReason');
     const sendRequestButton = $('sendRequestButton');
     const hqCallList = $('hqCallList');
+    const rosterOfficerName = $('rosterOfficerName');
+    const rosterCategory = $('rosterCategory');
+    const rosterNote = $('rosterNote');
+    const saveRosterButton = $('saveRosterButton');
+    const cancelRosterEditButton = $('cancelRosterEditButton');
+    const rosterList = $('rosterList');
+    const assignmentRosterList = $('assignmentRosterList');
+    const assignmentWarning = $('assignmentWarning');
+    const saveAssignmentsButton = $('saveAssignmentsButton');
     const status = $('adminConnectionStatus');
     const error = $('adminError');
     const remoteVideo = $('remoteVideo');
@@ -578,6 +638,8 @@
     let activeSession;
     let peer;
     let unsubscribeCalls;
+    let unsubscribeRoster;
+    let unsubscribeAssignments;
     let unsubscribeOfficers;
     let unsubscribeHqCalls;
     let unsubscribeOfferCandidates;
@@ -590,6 +652,10 @@
     let officerRefreshTimer;
     let activeCallRef;
     let activeOfficerRef;
+    let activeAssignmentRef;
+    let rosterCache = [];
+    let assignmentCache = [];
+    let editingRosterId;
     debug('signaling', '接続する呼出を選択してください');
 
     function updateQualityDisplay(data) {
@@ -613,6 +679,94 @@
       if (officer.status === 'online') return { key: 'online', label: 'online' };
       return { key: 'offline', label: 'offline' };
     }
+    function categoryLabel(category) { return category === 'specialist' ? '専門競技委員' : '登録競技委員'; }
+    function resetRosterEditor() {
+      editingRosterId = null;
+      rosterOfficerName.value = ''; rosterCategory.value = 'specialist'; rosterNote.value = '';
+      saveRosterButton.textContent = 'ロースターへ追加';
+      cancelRosterEditButton.hidden = true;
+    }
+    function renderRoster() {
+      const sorted = [...rosterCache].sort((a, b) => (a.officerName || '').localeCompare(b.officerName || '', 'ja'));
+      if (!sorted.length) { rosterList.innerHTML = '<p class="camera-empty">ロースターはまだ登録されていません。</p>'; return; }
+      rosterList.innerHTML = sorted.map((officer) => `<article class="camera-call-card camera-roster-card" data-active="${officer.active !== false}">
+        <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(officer.officerName || '名前未入力')}</span><span class="camera-card-status">${categoryLabel(officer.category)}</span></div>
+        <div class="camera-card-meta"><span>${escapeHtml(officer.note || 'メモなし')}</span><span>${officer.active === false ? '停止中' : '有効'}</span></div>
+        <div class="camera-roster-actions"><button class="camera-button camera-button-secondary" type="button" data-edit-roster="${escapeHtml(officer.id)}">編集</button><button class="camera-button camera-button-secondary" type="button" data-toggle-roster="${escapeHtml(officer.id)}">${officer.active === false ? '有効化' : '停止'}</button></div>
+      </article>`).join('');
+    }
+    function renderAssignmentRoster() {
+      if (!activeTournamentId) { assignmentRosterList.innerHTML = '<p class="camera-empty">大会IDを入力して「呼出を表示」を押してください。</p>'; saveAssignmentsButton.disabled = true; return; }
+      const available = rosterCache.filter((officer) => officer.active !== false).sort((a, b) => (a.officerName || '').localeCompare(b.officerName || '', 'ja'));
+      if (!available.length) { assignmentRosterList.innerHTML = '<p class="camera-empty">有効なロースターを登録してください。</p>'; saveAssignmentsButton.disabled = true; return; }
+      const assignmentsByOfficer = new Map(assignmentCache.map((assignment) => [assignment.officerId, assignment]));
+      assignmentRosterList.innerHTML = available.map((officer) => {
+        const assignment = assignmentsByOfficer.get(officer.officerId || officer.id);
+        const selected = Boolean(assignment);
+        const currentDevice = assignment?.deviceNo || '';
+        const options = ['1', '2', '3', '4', '5', '6', '7'].map((number) => `<option value="${number}" ${currentDevice === number ? 'selected' : ''}>No.${number}</option>`).join('');
+        return `<article class="camera-call-card camera-roster-card" data-roster-officer="${escapeHtml(officer.id)}">
+          <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(officer.officerName)}</span><span class="camera-card-status">${categoryLabel(officer.category)}</span></div>
+          <div class="camera-assignment-row"><label><input type="checkbox" data-assignment-select="${escapeHtml(officer.id)}" ${selected ? 'checked' : ''}> 選抜</label><label>端末 <select data-assignment-device="${escapeHtml(officer.id)}" ${selected ? '' : 'disabled'}><option value="">選択</option>${options}</select></label></div>
+        </article>`;
+      }).join('');
+      saveAssignmentsButton.disabled = false;
+    }
+    async function saveRoster() {
+      const officerName = rosterOfficerName.value.trim();
+      if (!officerName) { showError(error, 'ロースターへ追加する競技委員名を入力してください。'); return; }
+      try {
+        db = db || createFirebase();
+        const ref = editingRosterId ? db.collection('camera_roster').doc(editingRosterId) : db.collection('camera_roster').doc();
+        const existing = rosterCache.find((officer) => officer.id === editingRosterId);
+        const data = { officerId: ref.id, officerName, category: rosterCategory.value, active: existing?.active !== false, note: rosterNote.value.trim(), updatedAt: serverTime() };
+        if (!editingRosterId) data.createdAt = serverTime();
+        await ref.set(data, { merge: true });
+        resetRosterEditor();
+      } catch (rosterError) { showError(error, `ロースターを保存できませんでした: ${rosterError.message}`); }
+    }
+    async function saveAssignments() {
+      if (!db || !activeTournamentId) return;
+      const selected = [...assignmentRosterList.querySelectorAll('[data-assignment-select]:checked')].map((input) => {
+        const officer = rosterCache.find((item) => item.id === input.dataset.assignmentSelect);
+        const deviceNo = assignmentRosterList.querySelector(`[data-assignment-device="${input.dataset.assignmentSelect}"]`)?.value || '';
+        return { officer, deviceNo };
+      });
+      if (selected.length < 5 || selected.length > 7) { assignmentWarning.textContent = '大会用ロースターは5〜7名を選抜してください。'; assignmentWarning.dataset.tone = 'error'; return; }
+      if (selected.some((item) => !item.officer || !item.deviceNo)) { assignmentWarning.textContent = '選抜した全員に端末No.を割り当ててください。'; assignmentWarning.dataset.tone = 'error'; return; }
+      const deviceNos = selected.map((item) => item.deviceNo);
+      if (new Set(deviceNos).size !== deviceNos.length) { assignmentWarning.textContent = '端末No.は重複して割り当てできません。'; assignmentWarning.dataset.tone = 'error'; return; }
+      const hasSpecialist = selected.some((item) => item.officer.category === 'specialist');
+      assignmentWarning.textContent = hasSpecialist ? '専門競技委員を含む大会用割当です。' : '警告: 専門競技委員が含まれていません。';
+      assignmentWarning.dataset.tone = hasSpecialist ? '' : 'error';
+      saveAssignmentsButton.disabled = true;
+      try {
+        const assignments = db.collection('tournaments').doc(activeTournamentId).collection('camera_assignments');
+        const existingByOfficer = new Map(assignmentCache.map((assignment) => [assignment.officerId, assignment]));
+        const selectedIds = new Set(selected.map((item) => item.officer.officerId || item.officer.id));
+        const batch = db.batch();
+        selected.forEach(({ officer, deviceNo }) => {
+          const id = officer.officerId || officer.id;
+          const existing = existingByOfficer.get(id);
+          const ref = assignments.doc(id);
+          batch.set(ref, { assignmentId: id, officerId: id, officerName: officer.officerName, category: officer.category, deviceNo, deviceId: `iphone-${deviceNo}`, status: existing?.status || 'assigned', currentSessionId: existing?.currentSessionId || '', qualityMode: existing?.qualityMode || 'standard', qualityLabel: existing?.qualityLabel || '標準', lastSeen: existing?.lastSeen || null, createdAt: existing?.createdAt || serverTime(), updatedAt: serverTime() }, { merge: true });
+        });
+        assignmentCache.filter((assignment) => !selectedIds.has(assignment.officerId)).forEach((assignment) => batch.delete(assignments.doc(assignment.id)));
+        await batch.commit();
+      } catch (assignmentError) { showError(error, `大会用割当を保存できませんでした: ${assignmentError.message}`); }
+      finally { saveAssignmentsButton.disabled = false; }
+    }
+    async function watchRoster() {
+      try {
+        db = db || createFirebase();
+        if (unsubscribeRoster) unsubscribeRoster();
+        unsubscribeRoster = db.collection('camera_roster').onSnapshot((snapshot) => {
+          rosterCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          renderRoster();
+          renderAssignmentRoster();
+        }, (rosterError) => showError(error, `ロースターを取得できませんでした: ${rosterError.message}`));
+      } catch (rosterError) { showError(error, rosterError.message); }
+    }
     function renderOfficers(officers) {
       const sorted = officers.sort((a, b) => (a.officerName || '').localeCompare(b.officerName || '', 'ja'));
       officersById = new Map(sorted.map((officer) => [officer.id, officer]));
@@ -627,8 +781,8 @@
         const quality = officer.qualityMode ? `${escapeHtml(officer.qualityLabel || QUALITY_MODES[officer.qualityMode]?.label || officer.qualityMode)}` : '画質未取得';
         const canRequest = availability.key === 'online';
         return `<article class="camera-call-card camera-officer-card" data-availability="${availability.key}">
-          <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(officer.officerName || '名前未入力')}</span><span class="camera-card-status">${availability.label}</span></div>
-          <div class="camera-card-meta"><span>${quality}</span><time>${formatTime(officer.lastSeen)}</time></div>
+          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(officer.deviceNo || '-')} / ${escapeHtml(officer.officerName || '名前未入力')}</span><span class="camera-card-status">${availability.label}</span></div>
+          <div class="camera-card-meta"><span>${categoryLabel(officer.category)} / ${quality}</span><time>${formatTime(officer.lastSeen)}</time></div>
           <button class="camera-button camera-button-primary" type="button" data-select-officer="${escapeHtml(officer.id)}" ${canRequest ? '' : 'disabled'}>呼出</button>
         </article>`;
       }).join('');
@@ -636,7 +790,7 @@
     function selectOfficer(officer) {
       if (!officer) return;
       selectedOfficerData = officer;
-      selectedOfficer.textContent = `選択中: ${officer.officerName}（${officerAvailability(officer).label}）`;
+      selectedOfficer.textContent = `選択中: No.${officer.deviceNo || '-'} ${officer.officerName}（${officerAvailability(officer).label}）`;
       sendRequestButton.disabled = officerAvailability(officer).key !== 'online';
     }
     function renderHqCalls(calls) {
@@ -646,7 +800,7 @@
         const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '辞退', ended: '完了', missed: '未応答' }[call.status] || call.status;
         const canReview = call.sessionId && ['accepted', 'connected'].includes(call.status);
         return `<article class="camera-call-card" data-status="${escapeHtml(call.status || '')}">
-          <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="camera-card-status">${escapeHtml(statusLabel)}</span></div>
+          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(call.deviceNo || '-')} / ${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="camera-card-status">${escapeHtml(statusLabel)}</span></div>
           <div class="camera-card-meta"><span>${escapeHtml(call.hole || '-')}H / ${escapeHtml(call.groupNo || '-')}組</span><time>${formatTime(call.requestedAt)}</time></div>
           <div class="camera-card-meta"><span>${escapeHtml(call.reason || '本部確認')}</span><span>${call.sessionId ? 'session準備済み' : ''}</span></div>
           ${canReview ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(call.sessionId)}">映像を確認</button>` : ''}
@@ -663,7 +817,7 @@
       try {
         await db.collection('tournaments').doc(activeTournamentId).collection('camera_calls').add({
           targetOfficerId: selectedOfficerData.officerId || selectedOfficerData.id,
-          targetOfficerName: selectedOfficerData.officerName || '', hole, groupNo, reason: requestReason.value,
+          targetOfficerName: selectedOfficerData.officerName || '', deviceNo: String(selectedOfficerData.deviceNo || ''), assignmentId: selectedOfficerData.assignmentId || selectedOfficerData.id, hole, groupNo, reason: requestReason.value,
           status: 'requested', sessionId: '', requestedBy: 'HQ', requestedAt: serverTime(), acceptedAt: null,
           connectedAt: null, endedAt: null, memo: ''
         });
@@ -695,6 +849,7 @@
       activeSession = null;
       activeCallRef = null;
       activeOfficerRef = null;
+      activeAssignmentRef = null;
       remoteVideo.srcObject = null;
       remoteVideo.muted = true;
       setPlaceholderVisible(remotePlaceholder, true, '接続する呼出を選択してください');
@@ -765,8 +920,11 @@
         if (unsubscribeCalls) unsubscribeCalls();
         if (unsubscribeOfficers) unsubscribeOfficers();
         if (unsubscribeHqCalls) unsubscribeHqCalls();
+        if (unsubscribeAssignments) unsubscribeAssignments();
         resetViewer();
         activeTournamentId = tournamentId;
+        assignmentCache = [];
+        renderAssignmentRoster();
         selectedOfficerData = null;
         selectedOfficer.textContent = '競技委員を選択してください';
         sendRequestButton.disabled = true;
@@ -779,9 +937,13 @@
         }, (err) => { showError(error, `呼出の取得に失敗しました: ${err.message}`); setStatus(status, '監視エラー', 'error'); });
         unsubscribeOfficers = db.collection('tournaments').doc(tournamentId).collection('camera_officers').onSnapshot((snapshot) => {
           officersCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-          renderOfficers(officersCache);
         }, (err) => showError(error, `競技委員待機一覧を取得できませんでした: ${err.message}`));
-        if (!officerRefreshTimer) officerRefreshTimer = setInterval(() => renderOfficers(officersCache), 15000);
+        unsubscribeAssignments = db.collection('tournaments').doc(tournamentId).collection('camera_assignments').onSnapshot((snapshot) => {
+          assignmentCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+          renderAssignmentRoster();
+          renderOfficers(assignmentCache);
+        }, (err) => showError(error, `大会用割当を取得できませんでした: ${err.message}`));
+        if (!officerRefreshTimer) officerRefreshTimer = setInterval(() => renderOfficers(assignmentCache), 15000);
         unsubscribeHqCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').onSnapshot((snapshot) => {
           renderHqCalls(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
         }, (err) => showError(error, `本部からの映像依頼を取得できませんでした: ${err.message}`));
@@ -806,6 +968,7 @@
         activeSession = ref;
         activeCallRef = data.callId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_calls').doc(data.callId) : null;
         activeOfficerRef = data.officerId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_officers').doc(data.officerId) : null;
+        activeAssignmentRef = data.assignmentId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_assignments').doc(data.assignmentId) : null;
         updateQualityDisplay(data);
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
@@ -840,6 +1003,7 @@
         await ref.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'connected', connectedAt: serverTime(), hqUser: 'HQ' });
         if (activeCallRef) activeCallRef.update({ status: 'connected', connectedAt: serverTime() }).catch(console.warn);
         if (activeOfficerRef) activeOfficerRef.update({ status: 'busy', currentSessionId: ref.id, lastSeen: serverTime(), updatedAt: serverTime() }).catch(console.warn);
+        if (activeAssignmentRef) activeAssignmentRef.update({ status: 'busy', currentSessionId: ref.id, lastSeen: serverTime(), updatedAt: serverTime() }).catch(console.warn);
         memo.value = data.memo || '';
         completeButton.disabled = false;
         unsubscribeActiveSession = ref.onSnapshot((sessionSnapshot) => {
@@ -854,11 +1018,13 @@
       const session = activeSession;
       const callRef = activeCallRef;
       const officerRef = activeOfficerRef;
+      const assignmentRef = activeAssignmentRef;
       completeButton.disabled = true;
       try {
         await session.update({ status: 'ended', endedAt: serverTime(), memo: memo.value.trim() });
         if (callRef) await callRef.update({ status: 'ended', endedAt: serverTime(), memo: memo.value.trim() });
-        if (officerRef) await officerRef.update({ status: 'online', currentSessionId: '', lastSeen: serverTime(), updatedAt: serverTime() });
+        if (officerRef) await officerRef.set({ status: 'online', currentSessionId: '', lastSeen: serverTime(), updatedAt: serverTime() }, { merge: true });
+        if (assignmentRef) await assignmentRef.set({ status: 'online', currentSessionId: '', lastSeen: serverTime(), updatedAt: serverTime() }, { merge: true });
         resetViewer(); setStatus(status, '対応を完了しました');
       } catch (err) { showError(error, `対応完了を保存できませんでした: ${err.message}`); completeButton.disabled = false; }
     }
@@ -874,6 +1040,37 @@
       if (button) connect(button.dataset.reviewCall);
     });
     sendRequestButton.addEventListener('click', sendHqRequest);
+    saveRosterButton.addEventListener('click', saveRoster);
+    cancelRosterEditButton.addEventListener('click', resetRosterEditor);
+    rosterList.addEventListener('click', async (event) => {
+      const editButton = event.target.closest('[data-edit-roster]');
+      const toggleButton = event.target.closest('[data-toggle-roster]');
+      if (editButton) {
+        const officer = rosterCache.find((item) => item.id === editButton.dataset.editRoster);
+        if (!officer) return;
+        editingRosterId = officer.id;
+        rosterOfficerName.value = officer.officerName || '';
+        rosterCategory.value = officer.category || 'registered';
+        rosterNote.value = officer.note || '';
+        saveRosterButton.textContent = 'ロースターを更新';
+        cancelRosterEditButton.hidden = false;
+      }
+      if (toggleButton) {
+        const officer = rosterCache.find((item) => item.id === toggleButton.dataset.toggleRoster);
+        if (!officer || !db) return;
+        try { await db.collection('camera_roster').doc(officer.id).update({ active: officer.active === false, updatedAt: serverTime() }); }
+        catch (rosterError) { showError(error, `ロースター状態を更新できませんでした: ${rosterError.message}`); }
+      }
+    });
+    assignmentRosterList.addEventListener('change', (event) => {
+      const checkbox = event.target.closest('[data-assignment-select]');
+      if (!checkbox) return;
+      const select = assignmentRosterList.querySelector(`[data-assignment-device="${checkbox.dataset.assignmentSelect}"]`);
+      if (select) select.disabled = !checkbox.checked;
+    });
+    saveAssignmentsButton.addEventListener('click', saveAssignments);
+    resetRosterEditor();
+    watchRoster();
     completeButton.addEventListener('click', complete);
     manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });
     reloadVideoButton.addEventListener('click', () => {

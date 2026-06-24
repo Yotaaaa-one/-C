@@ -25,6 +25,20 @@
           </label>
           <button id="watchCallsButton" class="camera-button camera-button-primary" type="button">呼出を表示</button>
         </section>
+        <section class="camera-panel roster-panel" aria-label="競技委員ロースター管理">
+          <div class="camera-section-heading"><h2>競技委員ロースター</h2></div>
+          <input id="rosterOfficerName" type="text" placeholder="競技委員名">
+          <select id="rosterCategory"><option value="specialist">専門競技委員</option><option value="registered">登録競技委員</option></select>
+          <input id="rosterNote" type="text" placeholder="メモ（任意）">
+          <div class="camera-wait-actions"><button id="saveRosterButton" class="camera-button camera-button-primary" type="button">ロースターへ追加</button><button id="cancelRosterEditButton" class="camera-button camera-button-secondary" type="button" hidden>編集取消</button></div>
+          <div id="rosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
+        </section>
+        <section class="camera-panel assignment-panel" aria-label="大会用ロースター選抜">
+          <div class="camera-section-heading"><h2>大会用ロースター選抜</h2></div>
+          <p id="assignmentWarning" class="camera-assignment-warning">大会IDを入力すると、5〜7名を端末へ割り当てできます。</p>
+          <div id="assignmentRosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
+          <button id="saveAssignmentsButton" class="camera-button camera-button-primary" type="button" disabled>大会用割当を保存</button>
+        </section>
         <section class="camera-call-list-section" aria-label="競技委員待機一覧">
           <div class="camera-section-heading">
             <h2>競技委員待機一覧</h2>

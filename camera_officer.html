@@ -31,6 +31,20 @@
       </div>
     </section>
 
+    <section class="camera-panel device-panel" aria-label="固定端末の割当">
+      <div class="camera-section-heading"><h2>固定端末の割当</h2></div>
+      <label class="camera-field">iPhone No.
+        <select id="deviceNoSelect">
+          <option value="1">iPhone No.1</option><option value="2">iPhone No.2</option><option value="3">iPhone No.3</option><option value="4">iPhone No.4</option><option value="5">iPhone No.5</option><option value="6">iPhone No.6</option><option value="7">iPhone No.7</option>
+        </select>
+      </label>
+      <div class="camera-wait-actions">
+        <button id="saveDeviceButton" class="camera-button camera-button-secondary" type="button">端末No.を保存</button>
+        <button id="checkAssignmentButton" class="camera-button camera-button-primary" type="button">割当確認</button>
+      </div>
+      <p id="assignmentDisplay" class="camera-assignment-display">この端末の大会割当を確認してください。</p>
+    </section>
+
     <section class="camera-panel camera-wait-panel" aria-label="本部呼出待機">
       <div class="camera-section-heading">
         <h2>本部呼出待機</h2>
