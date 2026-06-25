@@ -51,6 +51,9 @@ button {
 button:disabled,
 .is-disabled {
   cursor: not-allowed;
+  opacity: 0.58;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
 .app-shell {
@@ -317,6 +320,7 @@ button:disabled,
   margin-top: 14px;
   color: var(--muted);
   font-weight: 700;
+  white-space: pre-wrap;
 }
 
 .status-message.error {
@@ -329,6 +333,95 @@ button:disabled,
 
 .status-message.success {
   color: var(--accent);
+}
+
+.status-dashboard {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+}
+
+.status-tile {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--panel-soft);
+}
+
+.status-tile span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.status-tile strong {
+  font-size: 1rem;
+}
+
+.refresh-button {
+  align-self: stretch;
+  min-width: 150px;
+}
+
+.maintenance-card {
+  border: 1px solid #f0d28a;
+  border-radius: var(--radius-lg);
+  padding: clamp(18px, 4vw, 26px);
+  background: var(--warning-soft);
+}
+
+.loading-card {
+  min-height: 360px;
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin-top: 20px;
+  background: white;
+  color: var(--primary-dark);
+}
+
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 4px solid var(--primary-soft);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: ruling-eye-spin 0.8s linear infinite;
+}
+
+@keyframes ruling-eye-spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-detail {
+  margin-top: 10px;
+}
+
+.error-detail summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.error-detail pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .filter-row {
@@ -633,6 +726,59 @@ button:disabled,
   margin-top: 18px;
 }
 
+.phone-usage-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-top: 18px;
+  background: var(--panel-soft);
+}
+
+.phone-usage-panel h3 {
+  margin: 0 0 12px;
+  font-size: 1.08rem;
+}
+
+.phone-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.phone-usage-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: white;
+}
+
+.phone-usage-card strong {
+  font-size: 1.05rem;
+}
+
+.phone-usage-card span,
+.phone-usage-card em {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.phone-usage-card.in-use {
+  border-color: rgba(31, 157, 122, 0.45);
+  background: var(--accent-soft);
+}
+
+.phone-usage-card.unused {
+  background: white;
+}
+
+.phone-usage-card.chief-fixed {
+  border-color: rgba(15, 95, 143, 0.35);
+}
+
 .phone-button.in-use {
   border-color: #f0d28a;
   color: var(--warning);
@@ -647,13 +793,58 @@ button:disabled,
 
 .login-status-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr auto;
+  grid-template-columns: 0.95fr 1.2fr 0.9fr 0.8fr 1fr 1fr auto;
   gap: 12px;
   align-items: center;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 12px 14px;
   background: white;
+}
+
+.login-status-row.is-active {
+  border-color: rgba(31, 157, 122, 0.45);
+  background: var(--accent-soft);
+}
+
+.login-status-row.is-ended {
+  opacity: 0.7;
+  background: #f1f3f6;
+}
+
+.assignment-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: white;
+}
+
+.assignment-row.is-active {
+  border-color: rgba(31, 157, 122, 0.45);
+  background: var(--accent-soft);
+}
+
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.state-badge.active {
+  color: #0c684f;
+  background: var(--accent-soft);
+}
+
+.state-badge.ended {
+  color: #5b6472;
+  background: #dfe3ea;
 }
 
 .login-status-row span {
@@ -708,7 +899,10 @@ button:disabled,
   .summary-grid,
   .phone-grid,
   .checkbox-grid,
-  .login-status-row {
+  .login-status-row,
+  .status-dashboard,
+  .phone-usage-grid,
+  .assignment-row {
     grid-template-columns: 1fr;
   }
 

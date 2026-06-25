@@ -47,6 +47,9 @@
     },
     tournamentDraft: null,
     loginDraft: null,
+    lastLoadedAt: null,
+    operationBusy: false,
+    globalMessage: null,
   };
 
   if (!app) {
@@ -143,6 +146,70 @@
     });
   }
 
+  function formatDateTimeWithSeconds(value) {
+    if (!value) return "未読込";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "未読込";
+    return date.toLocaleString("ja-JP", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
+  function shortFirestoreError(action, error) {
+    const detail = error?.message || String(error || "");
+    const lines = [`${action}に失敗しました。`, "通信状況を確認してください。", "もう一度「最新データを取得」を押してください。"];
+    if (/permission|PERMISSION_DENIED|Missing or insufficient permissions/i.test(detail)) {
+      lines.splice(1, 0, "Firestoreルールで読み書きが許可されていない可能性があります。");
+    }
+    return lines.join("\n");
+  }
+
+  function setControlsDisabled(disabled) {
+    app.querySelectorAll("button, input, select, textarea").forEach((element) => {
+      element.disabled = disabled;
+    });
+  }
+
+  function dataSummary() {
+    const sessions = readLoginSessions();
+    return {
+      officers: readOfficers().length,
+      tournaments: readTournaments().length,
+      activeLogins: sessions.filter((session) => session.status !== "ended").length,
+      endedLogins: sessions.filter((session) => session.status === "ended").length,
+    };
+  }
+
+  function sortTournaments(tournaments) {
+    return [...tournaments].sort((a, b) => {
+      const yearDiff = String(b.year || "").localeCompare(String(a.year || ""), "ja", { numeric: true });
+      if (yearDiff) return yearDiff;
+      const createdDiff = String(a.createdAt || "").localeCompare(String(b.createdAt || ""), "ja", { numeric: true });
+      if (createdDiff) return createdDiff;
+      return String(a.tournamentName || "").localeCompare(String(b.tournamentName || ""), "ja", { numeric: true, sensitivity: "base" });
+    });
+  }
+
+  function statusDashboardHtml() {
+    const summary = dataSummary();
+    return `
+      <div class="status-dashboard">
+        <div class="status-tile"><span>最終読込</span><strong>${escapeHtml(formatDateTimeWithSeconds(state.lastLoadedAt))}</strong></div>
+        <div class="status-tile"><span>ロースター</span><strong>${summary.officers}件</strong></div>
+        <div class="status-tile"><span>大会設定</span><strong>${summary.tournaments}件</strong></div>
+        <div class="status-tile"><span>activeログイン</span><strong>${summary.activeLogins}件</strong></div>
+        <div class="status-tile"><span>endedログイン</span><strong>${summary.endedLogins}件</strong></div>
+        <button id="refreshFirestoreButton" class="secondary-button refresh-button" type="button">最新データを取得</button>
+      </div>
+      ${state.globalMessage ? `<div id="globalMessage" class="status-message ${escapeHtml(state.globalMessage.type || "")}">${escapeHtml(state.globalMessage.message)}</div>` : ""}
+    `;
+  }
+
   function readOfficers() {
     return dataCache.officers.map(normalizeOfficer);
   }
@@ -153,6 +220,7 @@
     normalized.forEach((officer) => batch.set(rosterRef(officer.officerId), toFirestoreOfficer(officer), { merge: true }));
     await batch.commit();
     dataCache.officers = normalized;
+    state.lastLoadedAt = nowIso();
   }
 
   function readTournaments({ includeDeleted = false } = {}) {
@@ -166,6 +234,7 @@
     normalized.forEach((tournament) => batch.set(tournamentSettingsRef(tournament.tournamentId), toFirestoreTournament(tournament), { merge: true }));
     await batch.commit();
     dataCache.tournaments = normalized;
+    state.lastLoadedAt = nowIso();
   }
 
   function readLoginSessions() {
@@ -178,6 +247,7 @@
     normalized.forEach((session) => batch.set(loginSessionRef(session.tournamentId, session.sessionId), toFirestoreLoginSession(session), { merge: true }));
     await batch.commit();
     dataCache.loginSessions = normalized;
+    state.lastLoadedAt = nowIso();
   }
 
   function categoryLabel(value) {
@@ -463,11 +533,15 @@
       .join("")}`;
   }
 
-  function setStatus(message, type = "") {
+  function setStatus(message, type = "", detail = "") {
     const el = document.getElementById("statusMessage");
     if (!el) return;
     el.className = `status-message ${type}`.trim();
-    el.textContent = message || "";
+    if (detail) {
+      el.innerHTML = `${escapeHtml(message || "").replaceAll("\n", "<br>")}<details class="error-detail"><summary>詳細表示</summary><pre>${escapeHtml(detail)}</pre></details>`;
+    } else {
+      el.textContent = message || "";
+    }
   }
 
   function setCsvResult(message, type = "") {
@@ -475,6 +549,37 @@
     if (!el) return;
     el.className = `csv-result ${type}`.trim();
     el.textContent = message || "";
+  }
+
+  async function runOperation(options, task) {
+    const {
+      workingMessage = "処理中です…",
+      successMessage = "",
+      actionName = "処理",
+      rerender = false,
+    } = options || {};
+    if (state.operationBusy) return null;
+    state.operationBusy = true;
+    setControlsDisabled(true);
+    setStatus(workingMessage, "warning");
+    try {
+      const result = await task();
+      if (successMessage) {
+        state.globalMessage = { type: "success", message: successMessage };
+        setStatus(successMessage, "success");
+      }
+      if (rerender) render();
+      return result;
+    } catch (error) {
+      console.error(`${actionName} failed`, error);
+      const message = shortFirestoreError(actionName, error);
+      state.globalMessage = { type: "error", message };
+      setStatus(message, "error", firestoreErrorMessage(error));
+      return null;
+    } finally {
+      state.operationBusy = false;
+      setControlsDisabled(false);
+    }
   }
 
   function getValue(id) {
@@ -546,19 +651,24 @@
 
   function renderLoading(message = "Firestoreからデータを読み込んでいます…") {
     app.innerHTML = `
-      <section class="screen-card">
+      <section class="screen-card loading-card">
         <div class="screen-title">
           <div>
             <h2>Ruling Eye</h2>
-            <p>${escapeHtml(message)}</p>
+            <p>Firestoreから読み込み中です</p>
           </div>
         </div>
-        <div class="note-box">ロースター、大会設定、ログイン状態をFirestoreから取得しています。</div>
+        <div class="loading-indicator">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <strong>${escapeHtml(message)}</strong>
+        </div>
+        <div class="note-box">ロースター、大会設定、ログイン状態をFirestoreから取得しています。自動更新は行わず、更新ボタンで最新化します。</div>
       </section>
     `;
   }
 
   function renderFirestoreError(error) {
+    console.error("Firestore read failed", error);
     app.innerHTML = `
       <section class="screen-card">
         <div class="screen-title">
@@ -567,13 +677,20 @@
             <p>Ruling Eye管理データを読み込めませんでした。</p>
           </div>
         </div>
-        <div class="status-message error" style="white-space:pre-wrap;">${escapeHtml(firestoreErrorMessage(error))}</div>
+        <div class="status-message error" style="white-space:pre-wrap;">
+          ${escapeHtml(shortFirestoreError("Firestoreの読み込み", error))}
+          <details class="error-detail"><summary>詳細表示</summary><pre>${escapeHtml(firestoreErrorMessage(error))}</pre></details>
+        </div>
         <div class="note-box">
           Firebase SDK、firebase-config.js、または Firestore ルールを確認してください。
           必要なパス: camera_roster / tournaments/{tournamentId}/ruling_eye_settings / camera_assignments / ruling_eye_login_sessions
         </div>
+        <div class="next-actions">
+          <button id="retryBootstrapButton" class="primary-button" type="button">最新データを取得</button>
+        </div>
       </section>
     `;
+    on("retryBootstrapButton", "click", bootstrap);
   }
 
   async function loadFirestoreData() {
@@ -587,11 +704,13 @@
       .filter((doc) => doc.id === "main")
       .map((doc) => normalizeTournament({ ...doc.data() }));
     dataCache.loginSessions = sessionsSnapshot.docs.map((doc) => normalizeLoginSession({ sessionId: doc.id, ...doc.data() }));
+    state.lastLoadedAt = nowIso();
   }
 
   async function refreshFirestoreData({ silent = false } = {}) {
     if (!silent) renderLoading();
     await loadFirestoreData();
+    state.globalMessage = { type: "success", message: "最新データを取得しました。" };
     if (!silent) render();
   }
 
@@ -601,11 +720,23 @@
       db = createFirestore();
       await loadFirestoreData();
       firestoreReady = true;
+      state.globalMessage = { type: "success", message: "Firestoreから読み込みました。" };
       render();
     } catch (error) {
       console.error("Firestore initialization failed", error);
       renderFirestoreError(error);
     }
+  }
+
+  function bindRefreshButton() {
+    on("refreshFirestoreButton", "click", async () => {
+      await runOperation(
+        { workingMessage: "更新中です…", successMessage: "最新データを取得しました。", actionName: "Firestoreの読み込み", rerender: true },
+        async () => {
+          await loadFirestoreData();
+        },
+      );
+    });
   }
 
   function render() {
@@ -673,21 +804,22 @@
       <section class="screen">
         <div class="hero-card">
           <h2>Ruling Eye</h2>
-          <p>競技委員 映像裁定支援システム｜管理導線 Phase RE-1.1</p>
+          <p>競技委員 映像裁定支援システム｜Firestore管理導線 Phase RE-2.1</p>
         </div>
+        ${statusDashboardHtml()}
         <div class="menu-grid">
           ${mainMenuButton("goRoster", "競技委員ロースター", "新規登録 / 一覧・修正 / CSV")}
           ${mainMenuButton("goTournament", "大会設定", "新規登録 / 修正 / 削除")}
           ${mainMenuButton("goLogin", "大会ログイン", "本部 / 委員長 / 競技委員")}
         </div>
         <div class="note-box">
-          Firestore保存版です。カメラ映像、WebRTC、録画、Firebase Authentication はこの画面では扱いません。
+          Firestore保存版です。自動更新は行いません。「最新データを取得」で手動更新してください。
         </div>
-        <div class="screen-card" style="box-shadow:none;">
+        <div class="maintenance-card">
           <div class="screen-title">
             <div>
-              <h2 style="font-size:1.35rem;">Firestore接続</h2>
-              <p>${firestoreReady ? "接続済み。別端末でも同じ管理データを共有します。" : "未接続"}</p>
+              <h2 style="font-size:1.35rem;">保守・移行メニュー</h2>
+              <p>旧localStorage版で作成したデータをFirestoreへ移行します。通常運用では使用しません。</p>
             </div>
             <button id="migrateLocalStorage" class="secondary-button" type="button">localStorageデータをFirestoreへ移行</button>
           </div>
@@ -695,6 +827,7 @@
         </div>
       </section>
     `;
+    bindRefreshButton();
     on("goRoster", "click", () => navigate("rosterMenu"));
     on("goTournament", "click", () => navigate("tournamentMenu"));
     on("goLogin", "click", () => navigate("loginStep1"));
@@ -705,6 +838,7 @@
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("競技委員ロースター", "新規登録、一覧確認、CSV取込・取出しを行います。")}
+        ${statusDashboardHtml()}
         <div class="menu-grid two">
           <button id="newOfficer" class="menu-button sub" type="button">新規登録</button>
           <button id="listOfficer" class="menu-button sub" type="button">一覧・修正</button>
@@ -712,6 +846,7 @@
       </section>
     `;
     bindBack("home");
+    bindRefreshButton();
     on("newOfficer", "click", () => navigate("officerForm"));
     on("listOfficer", "click", () => navigate("rosterList"));
   }
@@ -815,18 +950,17 @@
       officers.push(payload);
     }
 
-    try {
-      setStatus("Firestoreへ保存しています…");
+    await runOperation({ workingMessage: "保存中です…", actionName: "Firestoreへの保存" }, async () => {
       await rosterRef(payload.officerId).set(toFirestoreOfficer(payload), { merge: true });
       if (existingIndex >= 0) {
         dataCache.officers[existingIndex] = payload;
       } else {
         dataCache.officers.push(payload);
       }
+      state.lastLoadedAt = nowIso();
+      state.globalMessage = { type: "success", message: "保存しました。" };
       navigate("officerComplete", { officerId: payload.officerId, mode: existingIndex >= 0 ? "edit" : "new" });
-    } catch (error) {
-      setStatus(`保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function renderOfficerComplete(params) {
@@ -905,6 +1039,7 @@
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("競技委員ロースター｜一覧・修正", "見出しクリックで昇順 / 降順を切り替えます。")}
+        ${statusDashboardHtml()}
         <div class="filter-row">
           <div class="field">
             <label for="filterCategory">区分選択</label>
@@ -932,15 +1067,19 @@
           <button id="exportCsv" class="secondary-button" type="button">CSVエクスポート</button>
           <button id="newOfficerFromList" class="primary-button" type="button">新規登録</button>
         </div>
+        <p id="statusMessage" class="status-message"></p>
         <div id="csvResult" class="csv-result hidden"></div>
         ${
           filtered.length
             ? rosterTableHtml(filtered)
-            : `<div class="empty-state">表示できる競技委員がいません。条件を変更するか、新規登録してください。</div>`
+            : officers.length
+              ? `<div class="empty-state">条件に一致する競技委員がいません。フィルターを変更してください。</div>`
+              : `<div class="empty-state">競技委員ロースターが未登録です。新規登録またはCSVインポートを行ってください。</div>`
         }
       </section>
     `;
     bindBack("rosterMenu");
+    bindRefreshButton();
     on("filterCategory", "change", () => {
       state.rosterFilters.category = getSelectValue("filterCategory");
       renderRosterList();
@@ -1104,6 +1243,7 @@
     const existingIds = new Set(officers.map((officer) => officer.officerId));
     let added = 0;
     let updated = 0;
+    let skipped = 0;
     const errors = [];
     rows.slice(1).forEach((row, offset) => {
       const lineNo = offset + 2;
@@ -1111,16 +1251,19 @@
       const officerName = getCell("officerName");
       if (!officerName) {
         errors.push(`${lineNo}行目: officerName が空です。`);
+        skipped += 1;
         return;
       }
       const categories = normalizeCategories(getCell("categories"));
       if (!categories.length) {
         errors.push(`${lineNo}行目: categories が不正または空です。`);
+        skipped += 1;
         return;
       }
       const active = parseCsvActive(getCell("active"));
       if (!active.ok) {
         errors.push(`${lineNo}行目: active が不正です。`);
+        skipped += 1;
         return;
       }
       const inputId = getCell("officerId");
@@ -1148,19 +1291,21 @@
       }
     });
     const message = [
-      `CSVインポート完了: 追加 ${added}件 / 更新 ${updated}件 / エラー ${errors.length}件`,
+      `CSVインポート結果`,
+      `追加件数: ${added}件`,
+      `更新件数: ${updated}件`,
+      `スキップ件数: ${skipped}件`,
+      `エラー件数: ${errors.length}件`,
+      errors.length ? "エラー行一覧:" : "エラーなし",
       ...errors.slice(0, 12),
       errors.length > 12 ? `ほか ${errors.length - 12}件のエラーがあります。` : "",
     ].filter(Boolean).join("\n");
-    try {
+    await runOperation({ workingMessage: "CSVインポートを保存中です…", actionName: "CSVインポート" }, async () => {
       await saveOfficers(officers);
       renderRosterList();
       document.getElementById("csvResult")?.classList.remove("hidden");
       setCsvResult(message, errors.length ? "error" : "success");
-    } catch (error) {
-      document.getElementById("csvResult")?.classList.remove("hidden");
-      setCsvResult(`CSVのFirestore保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function exportRosterCsv() {
@@ -1191,11 +1336,10 @@
   }
 
   async function migrateLocalStorageToFirestore() {
-    if (!window.confirm("localStorageに残っているRE-1.1データをFirestoreへ移行します。既存の同じIDは更新扱いにします。実行しますか？")) {
+    if (!window.confirm("現在のFirestoreデータに上書き・更新される可能性があります。移行しますか？")) {
       return;
     }
-    try {
-      setStatus("localStorageデータをFirestoreへ移行しています…");
+    await runOperation({ workingMessage: "localStorageデータをFirestoreへ移行中です…", actionName: "localStorageデータ移行" }, async () => {
       const localOfficers = readLocalArray(STORAGE_KEYS.officers).map(normalizeOfficer);
       const localTournaments = readLocalArray(STORAGE_KEYS.tournaments).map(normalizeTournament);
       const localSessions = readLocalArray(STORAGE_KEYS.loginSessions).map(normalizeLoginSession);
@@ -1208,9 +1352,7 @@
       await refreshFirestoreData({ silent: true });
       renderHome();
       setStatus(`Firestore移行完了: ロースター ${localOfficers.length}件 / 大会 ${localTournaments.length}件 / ログイン履歴 ${localSessions.length}件`, "success");
-    } catch (error) {
-      setStatus(`Firestore移行に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function mergeById(currentItems, incomingItems, key) {
@@ -1223,6 +1365,7 @@
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会設定", "大会の年度、競技委員長、競技委員人数を設定します。")}
+        ${statusDashboardHtml()}
         <div class="menu-grid two">
           <button id="newTournament" class="menu-button sub" type="button">新規登録</button>
           <button id="editTournament" class="menu-button sub" type="button">修正・削除</button>
@@ -1230,6 +1373,7 @@
       </section>
     `;
     bindBack("home");
+    bindRefreshButton();
     on("newTournament", "click", () => {
       state.tournamentDraft = createTournamentDraft();
       navigate("tournamentStep1", { mode: "new" });
@@ -1525,6 +1669,7 @@
       dataCache.tournaments.push(normalized);
     }
     await saveAssignmentsForTournament(normalized);
+    state.lastLoadedAt = nowIso();
   }
 
   function tournamentSummaryHtml(draft, selectedOfficers, clickable = false) {
@@ -1590,14 +1735,12 @@
       updatedAt: now,
     });
 
-    try {
-      setStatus("Firestoreへ大会設定と競技委員割当を保存しています…");
+    await runOperation({ workingMessage: "大会設定を保存中です…", actionName: "大会設定の保存" }, async () => {
       await saveTournamentDocAndAssignments(payload);
       state.tournamentDraft = createTournamentDraft(payload);
+      state.globalMessage = { type: "success", message: "大会設定を保存しました。" };
       navigate("tournamentComplete", { tournamentId: payload.tournamentId, mode });
-    } catch (error) {
-      setStatus(`大会設定の保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function renderTournamentComplete(params) {
@@ -1618,13 +1761,14 @@
   }
 
   function renderTournamentEditSelect(year = "") {
-    const tournaments = readTournaments();
-    const years = Array.from(new Set(tournaments.map((tournament) => tournament.year).filter(Boolean))).sort();
+    const tournaments = sortTournaments(readTournaments());
+    const years = Array.from(new Set(tournaments.map((tournament) => tournament.year).filter(Boolean))).sort((a, b) => String(b).localeCompare(String(a), "ja", { numeric: true }));
     const selectedYear = year || years[0] || "";
     const tournamentsInYear = tournaments.filter((tournament) => tournament.year === selectedYear);
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会設定｜修正・削除", "年度を選択すると登録済み大会が表示されます。削除は論理削除です。")}
+        ${statusDashboardHtml()}
         ${
           tournaments.length
             ? `
@@ -1648,11 +1792,12 @@
                 <button id="loadTournamentEdit" class="primary-button" type="button">修正 ⇒</button>
               </div>
             `
-            : `<div class="empty-state">登録済み大会がありません。先に大会設定の新規登録を行ってください。</div>`
+            : `<div class="empty-state">大会設定が未登録です。大会設定から新規登録してください。</div>`
         }
       </section>
     `;
     bindBack("tournamentMenu");
+    bindRefreshButton();
     on("editYear", "change", () => navigate("tournamentEditSelect", { year: getSelectValue("editYear") }, false));
     on("loadTournamentEdit", "click", () => {
       const tournamentId = getSelectValue("editTournamentId");
@@ -1673,7 +1818,7 @@
       setStatus("削除する大会を選択してください。", "error");
       return;
     }
-    if (!window.confirm("本当にこの大会設定を削除しますか？")) {
+    if (!window.confirm("この大会設定を削除しますか？削除後はログイン候補に表示されません。")) {
       return;
     }
     const now = nowIso();
@@ -1682,14 +1827,12 @@
         ? { ...tournament, deleted: true, deletedAt: now, updatedAt: now }
         : tournament,
     );
-    try {
+    await runOperation({ workingMessage: "大会設定を削除中です…", actionName: "大会削除" }, async () => {
       await saveTournaments(tournaments);
       await endAllSessions(tournamentId);
       setStatus("大会設定を削除しました。削除済み大会は通常一覧・ログイン候補に表示されません。", "success");
       setTimeout(() => navigate("tournamentEditSelect", {}, false), 400);
-    } catch (error) {
-      setStatus(`大会削除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function renderTournamentEditReview() {
@@ -1717,8 +1860,8 @@
   }
 
   function renderLoginStep1(year = "", tournamentId = "") {
-    const tournaments = readTournaments().filter((tournament) => tournament.active !== false);
-    const years = Array.from(new Set(tournaments.map((tournament) => tournament.year).filter(Boolean))).sort();
+    const tournaments = sortTournaments(readTournaments().filter((tournament) => tournament.active !== false));
+    const years = Array.from(new Set(tournaments.map((tournament) => tournament.year).filter(Boolean))).sort((a, b) => String(b).localeCompare(String(a), "ja", { numeric: true }));
     const selectedYear = year || years[0] || "";
     const tournamentsInYear = tournaments.filter((tournament) => tournament.year === selectedYear);
     const selectedTournamentId = tournamentId || tournamentsInYear[0]?.tournamentId || "";
@@ -1726,6 +1869,7 @@
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン", "年度と大会名を選択してログインに進みます。ログイン状態の個別解除 / 全解除もできます。")}
+        ${statusDashboardHtml()}
         ${
           tournaments.length
             ? `
@@ -1747,13 +1891,15 @@
               <div class="next-actions">
                 <button id="loginTournament" class="primary-button" type="button">ログイン</button>
               </div>
+              ${selectedTournament ? phoneUsagePanelHtml(selectedTournament) : ""}
               ${selectedTournament ? loginStatusPanelHtml(selectedTournament.tournamentId) : ""}
             `
-            : `<div class="empty-state">登録済み大会がありません。先に大会設定を行ってください。</div>`
+            : `<div class="empty-state">大会設定が未登録です。大会設定から新規登録してください。</div>`
         }
       </section>
     `;
     bindBack("home");
+    bindRefreshButton();
     on("loginYear", "change", () => navigate("loginStep1", { year: getSelectValue("loginYear") }, false));
     on("loginTournamentId", "change", () => navigate("loginStep1", { year: selectedYear, tournamentId: getSelectValue("loginTournamentId") }, false));
     on("loginTournament", "click", () => {
@@ -1769,29 +1915,86 @@
   }
 
   function loginStatusPanelHtml(tournamentId) {
-    const sessions = activeLoginSessions(tournamentId);
+    const sessions = readLoginSessions()
+      .filter((session) => session.tournamentId === tournamentId)
+      .sort((a, b) => {
+        if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+        return String(b.loginAt || "").localeCompare(String(a.loginAt || ""));
+      });
+    const activeCount = sessions.filter((session) => session.status !== "ended").length;
     return `
-      <div class="screen-card" style="box-shadow:none; margin-top:18px;">
+      <div class="screen-card login-status-panel" style="box-shadow:none; margin-top:18px;">
         <div class="screen-title">
           <div>
             <h2 style="font-size:1.35rem;">この大会のログイン状態を確認</h2>
-            <p>現在使用中扱いの割当を確認・解除できます。</p>
+            <p>active / ended の状態、ログイン時刻、終了時刻を確認できます。</p>
           </div>
-          <button id="endAllSessions" class="danger-button" type="button"${sessions.length ? "" : " disabled"}>全解除</button>
+          <button id="endAllSessions" class="danger-button" type="button"${activeCount ? "" : " disabled"}>全解除</button>
         </div>
         ${
           sessions.length
             ? `<div class="login-status-list">
                 ${sessions.map((session) => `
-                  <div class="login-status-row">
-                    <strong>${escapeHtml(session.officerName || session.roleLabel)}</strong>
-                    <span>${escapeHtml(session.roleLabel)} / ${session.deviceNo ? `iPhone No.${escapeHtml(session.deviceNo)}` : "端末割当なし"}</span>
-                    <button class="danger-button" type="button" data-end-session="${escapeHtml(session.sessionId)}">個別解除</button>
+                  <div class="login-status-row ${session.status === "ended" ? "is-ended" : "is-active"}">
+                    <strong>${escapeHtml(session.roleLabel)}</strong>
+                    <span>${escapeHtml(session.officerName || "-")}</span>
+                    <span>${session.deviceNo ? `iPhone No.${escapeHtml(session.deviceNo)}` : "iPhone No.なし"}</span>
+                    <span><span class="state-badge ${session.status === "ended" ? "ended" : "active"}">${escapeHtml(session.status)}</span></span>
+                    <span>${escapeHtml(formatDateTime(session.loginAt))}</span>
+                    <span>${escapeHtml(session.endedAt ? formatDateTime(session.endedAt) : "-")}</span>
+                    <button class="danger-button" type="button" data-end-session="${escapeHtml(session.sessionId)}"${session.status === "ended" ? " disabled" : ""}>個別解除</button>
                   </div>
                 `).join("")}
               </div>`
-            : `<div class="empty-state">現在、使用中扱いのログインはありません。</div>`
+            : `<div class="empty-state">現在、この大会のログイン状態はありません。</div>`
         }
+      </div>
+    `;
+  }
+
+  function phoneUsagePanelHtml(tournament) {
+    const activeByDevice = new Map(activeLoginSessions(tournament.tournamentId).filter((session) => session.deviceNo).map((session) => [String(session.deviceNo), session]));
+    return `
+      <div class="phone-usage-panel">
+        <h3>iPhone No.使用状況</h3>
+        <div class="phone-usage-grid">
+          ${["1", "2", "3", "4", "5", "6", "7"].map((number) => {
+            const session = activeByDevice.get(number);
+            const isChiefNo = number === "1";
+            const displayName = session ? (session.officerName || session.roleLabel) : isChiefNo ? (tournament.chiefOfficerName || "競技委員長未設定") : "未使用";
+            const displayState = session ? "使用中" : isChiefNo ? "未ログイン" : "未使用";
+            return `
+              <div class="phone-usage-card ${session ? "in-use" : "unused"} ${isChiefNo ? "chief-fixed" : ""}">
+                <strong>No.${number}</strong>
+                <span>${isChiefNo ? "競技委員長固定" : "通常競技委員"}</span>
+                <b>${escapeHtml(displayName)}</b>
+                <em>${escapeHtml(displayState)}</em>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function assignmentSummaryPanelHtml(tournament) {
+    const { mapByOfficer } = assignmentMap(tournament.tournamentId);
+    const officers = Array.isArray(tournament.selectedOfficers) ? tournament.selectedOfficers : [];
+    return `
+      <div class="phone-usage-panel">
+        <h3>競技委員ごとの割当状況</h3>
+        <div class="login-status-list">
+          ${officers.length ? officers.map((officer) => {
+            const isChief = tournament.chiefOfficerId !== "other" && officer.officerId === tournament.chiefOfficerId;
+            const assigned = mapByOfficer.get(officer.officerId);
+            return `
+              <div class="assignment-row ${assigned ? "is-active" : ""}">
+                <strong>${escapeHtml(officer.name || officer.officerName)}</strong>
+                <span>${isChief ? "競技委員長 / No.1" : assigned?.deviceNo ? `No.${escapeHtml(assigned.deviceNo)} 使用中` : "未割当"}</span>
+              </div>
+            `;
+          }).join("") : `<div class="empty-state">選択済み競技委員がありません。</div>`}
+        </div>
       </div>
     `;
   }
@@ -1799,21 +2002,17 @@
   function bindLoginStatusActions(tournamentId, afterUpdate) {
     if (!tournamentId) return;
     on("endAllSessions", "click", async () => {
-      if (!window.confirm("この大会の active login session をすべて解除しますか？")) return;
-      try {
+      if (!window.confirm("この大会のactiveログインをすべて解除しますか？")) return;
+      await runOperation({ workingMessage: "全解除を実行中です…", actionName: "全解除" }, async () => {
         await endAllSessions(tournamentId);
         afterUpdate();
-      } catch (error) {
-        setStatus(`全解除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-      }
+      });
     });
     onAll("[data-end-session]", "click", async (event) => {
-      try {
+      await runOperation({ workingMessage: "個別解除を実行中です…", actionName: "個別解除" }, async () => {
         await endSession(event.currentTarget.dataset.endSession);
         afterUpdate();
-      } catch (error) {
-        setStatus(`個別解除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-      }
+      });
     });
   }
 
@@ -1841,6 +2040,7 @@
           </button>
         </div>
         <p id="statusMessage" class="status-message"></p>
+        ${phoneUsagePanelHtml(tournament)}
         ${loginStatusPanelHtml(tournament.tournamentId)}
       </section>
     `;
@@ -1885,6 +2085,7 @@
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン｜競技委員選択", `${tournament.tournamentName}｜委員長は通常競技委員の選択肢から除外しています。`)}
+        ${assignmentSummaryPanelHtml(tournament)}
         ${
           selectedOfficers.length
             ? `<div class="choice-list">
@@ -1902,6 +2103,7 @@
               </div>`
             : `<div class="empty-state">委員長を除く競技委員がいません。大会設定を確認してください。</div>`
         }
+        ${phoneUsagePanelHtml(tournament)}
         ${loginStatusPanelHtml(tournament.tournamentId)}
       </section>
     `;
@@ -1931,6 +2133,7 @@
       <section class="screen-card">
         ${screenHeader("大会ログイン｜iPhone No.選択", `${state.loginDraft.officerName}｜通常競技委員は No.2〜No.7 のみ選択できます。`)}
         ${currentOfficerSession?.deviceNo ? `<div class="note-box">この競技委員は既に iPhone No.${escapeHtml(currentOfficerSession.deviceNo)} でログイン済みです。別番号を選ぶと変更確認を出します。</div>` : ""}
+        ${phoneUsagePanelHtml(tournament)}
         <div class="phone-grid">
           ${["2", "3", "4", "5", "6", "7"]
             .map((number) => {
@@ -2004,14 +2207,12 @@
       updatedAt: now,
     });
     updatedSessions.push(session);
-    try {
-      setStatus("ログイン状態をFirestoreへ保存しています…");
+    await runOperation({ workingMessage: "ログイン状態を保存中です…", actionName: "ログイン状態の保存" }, async () => {
       await saveLoginSessions(updatedSessions);
       await saveAssignmentsForTournament(tournament);
+      state.globalMessage = { type: "success", message: "ログイン状態を保存しました。" };
       navigate("loginComplete", { sessionId: session.sessionId });
-    } catch (error) {
-      setStatus(`ログイン状態の保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
-    }
+    });
   }
 
   function renderLoginComplete(sessionId) {
