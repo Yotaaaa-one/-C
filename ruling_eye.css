@@ -339,6 +339,61 @@ button:disabled,
   margin-top: 18px;
 }
 
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.check-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: white;
+  font-weight: 800;
+}
+
+.check-card input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--primary);
+}
+
+.csv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 18px;
+}
+
+.csv-result {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  white-space: pre-wrap;
+  font-weight: 700;
+}
+
+.csv-result.success {
+  border-color: rgba(31, 157, 122, 0.4);
+  color: #0c684f;
+  background: var(--accent-soft);
+}
+
+.csv-result.error {
+  border-color: rgba(196, 61, 61, 0.35);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .list-table {
   width: 100%;
   border-collapse: collapse;
@@ -362,6 +417,23 @@ button:disabled,
   background: var(--panel-soft);
   font-size: 0.88rem;
   letter-spacing: 0.04em;
+}
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 900;
+}
+
+.sort-mark {
+  color: var(--primary);
+  font-size: 0.9em;
 }
 
 .list-table tr:last-child td {
@@ -561,6 +633,41 @@ button:disabled,
   margin-top: 18px;
 }
 
+.phone-button.in-use {
+  border-color: #f0d28a;
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.login-status-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.login-status-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: white;
+}
+
+.login-status-row span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .hidden {
   display: none !important;
 }
@@ -599,7 +706,9 @@ button:disabled,
   .filter-row,
   .choice-list,
   .summary-grid,
-  .phone-grid {
+  .phone-grid,
+  .checkbox-grid,
+  .login-status-row {
     grid-template-columns: 1fr;
   }
 
