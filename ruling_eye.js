@@ -23,6 +23,15 @@
 
   const app = document.getElementById("app");
 
+  const dataCache = {
+    officers: [],
+    tournaments: [],
+    loginSessions: [],
+  };
+
+  let db = null;
+  let firestoreReady = false;
+
   const state = {
     route: "home",
     params: {},
@@ -53,7 +62,7 @@
       .replaceAll("'", "&#039;");
   }
 
-  function readArray(key) {
+  function readLocalArray(key) {
     try {
       const value = JSON.parse(localStorage.getItem(key) || "[]");
       return Array.isArray(value) ? value : [];
@@ -63,12 +72,58 @@
     }
   }
 
-  function writeArray(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
   function nowIso() {
     return new Date().toISOString();
+  }
+
+  function normalizeDateValue(value) {
+    if (!value) return null;
+    if (typeof value === "string") return value;
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value.toDate === "function") return value.toDate().toISOString();
+    if (typeof value.seconds === "number") return new Date(value.seconds * 1000).toISOString();
+    return String(value);
+  }
+
+  function firestoreErrorMessage(error) {
+    const detail = error?.message || String(error || "");
+    const permissionHint = /permission|PERMISSION_DENIED|Missing or insufficient permissions/i.test(detail)
+      ? "\nFirestoreルールで読み書きが許可されていない可能性があります。"
+      : "";
+    return `${detail}${permissionHint}`;
+  }
+
+  function readFirebaseConfig() {
+    return window.CAMERA_FIREBASE_CONFIG || window.FIREBASE_CONFIG || window.__firebase_config || window.firebaseConfig ||
+      (typeof firebaseConfig !== "undefined" ? firebaseConfig : null);
+  }
+
+  function createFirestore() {
+    if (!window.firebase) {
+      throw new Error("Firebase SDKを読み込めませんでした。ネットワーク接続を確認してください。");
+    }
+    const config = readFirebaseConfig();
+    if (!config && !firebase.apps.length) {
+      throw new Error("Firebase設定が見つかりません。firebase-config.js を確認してください。");
+    }
+    if (!firebase.apps.length) firebase.initializeApp(config);
+    return firebase.firestore();
+  }
+
+  function rosterRef(officerId) {
+    return db.collection("camera_roster").doc(officerId);
+  }
+
+  function tournamentSettingsRef(tournamentId) {
+    return db.collection("tournaments").doc(tournamentId).collection("ruling_eye_settings").doc("main");
+  }
+
+  function assignmentRef(tournamentId, assignmentId) {
+    return db.collection("tournaments").doc(tournamentId).collection("camera_assignments").doc(assignmentId);
+  }
+
+  function loginSessionRef(tournamentId, sessionId) {
+    return db.collection("tournaments").doc(tournamentId).collection("ruling_eye_login_sessions").doc(sessionId);
   }
 
   function makeId(prefix) {
@@ -89,28 +144,40 @@
   }
 
   function readOfficers() {
-    return readArray(STORAGE_KEYS.officers).map(normalizeOfficer);
+    return dataCache.officers.map(normalizeOfficer);
   }
 
-  function saveOfficers(officers) {
-    writeArray(STORAGE_KEYS.officers, officers.map(normalizeOfficer));
+  async function saveOfficers(officers) {
+    const normalized = officers.map(normalizeOfficer);
+    const batch = db.batch();
+    normalized.forEach((officer) => batch.set(rosterRef(officer.officerId), toFirestoreOfficer(officer), { merge: true }));
+    await batch.commit();
+    dataCache.officers = normalized;
   }
 
   function readTournaments({ includeDeleted = false } = {}) {
-    const tournaments = readArray(STORAGE_KEYS.tournaments).map(normalizeTournament);
+    const tournaments = dataCache.tournaments.map(normalizeTournament);
     return includeDeleted ? tournaments : tournaments.filter((tournament) => tournament.deleted !== true);
   }
 
-  function saveTournaments(tournaments) {
-    writeArray(STORAGE_KEYS.tournaments, tournaments.map(normalizeTournament));
+  async function saveTournaments(tournaments) {
+    const normalized = tournaments.map(normalizeTournament);
+    const batch = db.batch();
+    normalized.forEach((tournament) => batch.set(tournamentSettingsRef(tournament.tournamentId), toFirestoreTournament(tournament), { merge: true }));
+    await batch.commit();
+    dataCache.tournaments = normalized;
   }
 
   function readLoginSessions() {
-    return readArray(STORAGE_KEYS.loginSessions).map(normalizeLoginSession);
+    return dataCache.loginSessions.map(normalizeLoginSession);
   }
 
-  function saveLoginSessions(sessions) {
-    writeArray(STORAGE_KEYS.loginSessions, sessions.map(normalizeLoginSession));
+  async function saveLoginSessions(sessions) {
+    const normalized = sessions.map(normalizeLoginSession);
+    const batch = db.batch();
+    normalized.forEach((session) => batch.set(loginSessionRef(session.tournamentId, session.sessionId), toFirestoreLoginSession(session), { merge: true }));
+    await batch.commit();
+    dataCache.loginSessions = normalized;
   }
 
   function categoryLabel(value) {
@@ -184,8 +251,8 @@
       categoryLabel: categoriesLabel(categories),
       active: normalizeActive(officer.active, true),
       note: officer.note || "",
-      createdAt: officer.createdAt || nowIso(),
-      updatedAt: officer.updatedAt || nowIso(),
+      createdAt: normalizeDateValue(officer.createdAt) || nowIso(),
+      updatedAt: normalizeDateValue(officer.updatedAt) || nowIso(),
       name: officerName,
       kana: officerKana,
     };
@@ -212,9 +279,9 @@
         : [],
       active: tournament.active !== false,
       deleted: tournament.deleted === true,
-      deletedAt: tournament.deletedAt || null,
-      createdAt: tournament.createdAt || nowIso(),
-      updatedAt: tournament.updatedAt || nowIso(),
+      deletedAt: normalizeDateValue(tournament.deletedAt),
+      createdAt: normalizeDateValue(tournament.createdAt) || nowIso(),
+      updatedAt: normalizeDateValue(tournament.updatedAt) || nowIso(),
     };
   }
 
@@ -234,10 +301,99 @@
       deviceNo,
       iphoneNo: deviceNo ? Number(deviceNo) : null,
       status,
-      loginAt: session.loginAt || nowIso(),
-      endedAt: session.endedAt || null,
-      updatedAt: session.updatedAt || session.loginAt || nowIso(),
+      loginAt: normalizeDateValue(session.loginAt) || nowIso(),
+      endedAt: normalizeDateValue(session.endedAt),
+      updatedAt: normalizeDateValue(session.updatedAt) || normalizeDateValue(session.loginAt) || nowIso(),
     };
+  }
+
+  function toFirestoreOfficer(officer) {
+    const normalized = normalizeOfficer(officer);
+    return {
+      officerId: normalized.officerId,
+      officerName: normalized.officerName,
+      officerKana: normalized.officerKana,
+      memberNo: normalized.memberNo,
+      categories: normalized.categories,
+      active: normalized.active,
+      note: normalized.note,
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
+    };
+  }
+
+  function toFirestoreTournament(tournament) {
+    const normalized = normalizeTournament(tournament);
+    return {
+      tournamentId: normalized.tournamentId,
+      year: normalized.year,
+      tournamentName: normalized.tournamentName,
+      officerCount: normalized.officerCount,
+      chiefOfficerId: normalized.chiefOfficerId,
+      chiefOfficerName: normalized.chiefOfficerName,
+      chiefOfficerIsOther: normalized.chiefOfficerId === "other",
+      selectedOfficerIds: normalized.selectedOfficerIds,
+      selectedOfficers: normalized.selectedOfficers,
+      deleted: normalized.deleted,
+      deletedAt: normalized.deletedAt,
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
+    };
+  }
+
+  function toFirestoreLoginSession(session) {
+    const normalized = normalizeLoginSession(session);
+    return {
+      sessionId: normalized.sessionId,
+      tournamentId: normalized.tournamentId,
+      tournamentName: normalized.tournamentName,
+      loginRole: normalized.loginRole,
+      roleLabel: normalized.roleLabel,
+      officerId: normalized.officerId,
+      officerName: normalized.officerName,
+      deviceNo: normalized.deviceNo,
+      deviceType: normalized.loginRole === "hq" ? "pc_or_ipad" : "iphone",
+      status: normalized.status,
+      loginAt: normalized.loginAt,
+      endedAt: normalized.endedAt,
+      updatedAt: normalized.updatedAt,
+    };
+  }
+
+  function toFirestoreAssignment(tournament, officer, index = 0) {
+    const normalizedOfficer = normalizeOfficer(officer);
+    const isChief = tournament.chiefOfficerId !== "other" && normalizedOfficer.officerId === tournament.chiefOfficerId;
+    const assignmentId = normalizedOfficer.officerId;
+    const existingSession = activeLoginSessions(tournament.tournamentId).find((session) => session.officerId === normalizedOfficer.officerId);
+    return {
+      assignmentId,
+      tournamentId: tournament.tournamentId,
+      officerId: normalizedOfficer.officerId,
+      officerName: normalizedOfficer.officerName,
+      officerKana: normalizedOfficer.officerKana,
+      memberNo: normalizedOfficer.memberNo,
+      categories: normalizedOfficer.categories,
+      categoryLabels: normalizedOfficer.categories.map(categoryLabel),
+      deviceNo: isChief ? "1" : existingSession?.deviceNo || null,
+      deviceId: null,
+      status: existingSession?.status === "active" ? "online" : "assigned",
+      currentSessionId: existingSession?.sessionId || null,
+      qualityMode: "standard",
+      qualityLabel: "標準",
+      lastSeen: existingSession?.updatedAt || null,
+      sortOrder: index,
+      createdAt: tournament.createdAt || nowIso(),
+      updatedAt: nowIso(),
+    };
+  }
+
+  async function updateAssignmentFromSession(session) {
+    if (!session?.tournamentId || !session?.officerId) return;
+    const tournament = getTournamentById(session.tournamentId, { includeDeleted: true });
+    const officer = getOfficerById(session.officerId);
+    if (!tournament || !officer) return;
+    const assignment = toFirestoreAssignment(tournament, officer);
+    await assignmentRef(session.tournamentId, assignment.assignmentId).set(assignment, { merge: true });
   }
 
   function getOfficerById(officerId) {
@@ -256,7 +412,7 @@
     return readLoginSessions().filter((session) => session.tournamentId === tournamentId && session.status !== "ended");
   }
 
-  function endSession(sessionId) {
+  async function endSession(sessionId) {
     const sessions = readLoginSessions();
     const now = nowIso();
     const updated = sessions.map((session) =>
@@ -264,17 +420,21 @@
         ? { ...session, status: "ended", endedAt: now, updatedAt: now }
         : session,
     );
-    saveLoginSessions(updated);
+    await saveLoginSessions(updated);
+    const ended = updated.find((session) => session.sessionId === sessionId);
+    if (ended?.officerId) await updateAssignmentFromSession(ended);
   }
 
-  function endAllSessions(tournamentId) {
+  async function endAllSessions(tournamentId) {
     const now = nowIso();
     const updated = readLoginSessions().map((session) =>
       session.tournamentId === tournamentId && session.status !== "ended"
         ? { ...session, status: "ended", endedAt: now, updatedAt: now }
         : session,
     );
-    saveLoginSessions(updated);
+    await saveLoginSessions(updated);
+    const tournament = getTournamentById(tournamentId, { includeDeleted: true });
+    if (tournament) await saveAssignmentsForTournament(tournament);
   }
 
   function getYearOptions() {
@@ -384,6 +544,70 @@
     on("backButton", "click", () => goBack(fallback));
   }
 
+  function renderLoading(message = "Firestoreからデータを読み込んでいます…") {
+    app.innerHTML = `
+      <section class="screen-card">
+        <div class="screen-title">
+          <div>
+            <h2>Ruling Eye</h2>
+            <p>${escapeHtml(message)}</p>
+          </div>
+        </div>
+        <div class="note-box">ロースター、大会設定、ログイン状態をFirestoreから取得しています。</div>
+      </section>
+    `;
+  }
+
+  function renderFirestoreError(error) {
+    app.innerHTML = `
+      <section class="screen-card">
+        <div class="screen-title">
+          <div>
+            <h2>Firestore接続エラー</h2>
+            <p>Ruling Eye管理データを読み込めませんでした。</p>
+          </div>
+        </div>
+        <div class="status-message error" style="white-space:pre-wrap;">${escapeHtml(firestoreErrorMessage(error))}</div>
+        <div class="note-box">
+          Firebase SDK、firebase-config.js、または Firestore ルールを確認してください。
+          必要なパス: camera_roster / tournaments/{tournamentId}/ruling_eye_settings / camera_assignments / ruling_eye_login_sessions
+        </div>
+      </section>
+    `;
+  }
+
+  async function loadFirestoreData() {
+    const [rosterSnapshot, settingsSnapshot, sessionsSnapshot] = await Promise.all([
+      db.collection("camera_roster").get(),
+      db.collectionGroup("ruling_eye_settings").get(),
+      db.collectionGroup("ruling_eye_login_sessions").get(),
+    ]);
+    dataCache.officers = rosterSnapshot.docs.map((doc) => normalizeOfficer({ officerId: doc.id, ...doc.data() }));
+    dataCache.tournaments = settingsSnapshot.docs
+      .filter((doc) => doc.id === "main")
+      .map((doc) => normalizeTournament({ ...doc.data() }));
+    dataCache.loginSessions = sessionsSnapshot.docs.map((doc) => normalizeLoginSession({ sessionId: doc.id, ...doc.data() }));
+  }
+
+  async function refreshFirestoreData({ silent = false } = {}) {
+    if (!silent) renderLoading();
+    await loadFirestoreData();
+    if (!silent) render();
+  }
+
+  async function bootstrap() {
+    renderLoading();
+    try {
+      db = createFirestore();
+      await loadFirestoreData();
+      firestoreReady = true;
+      render();
+    } catch (error) {
+      console.error("Firestore initialization failed", error);
+      renderFirestoreError(error);
+    }
+  }
+
   function render() {
     switch (state.route) {
       case "home":
@@ -457,13 +681,24 @@
           ${mainMenuButton("goLogin", "大会ログイン", "本部 / 委員長 / 競技委員")}
         </div>
         <div class="note-box">
-          localStorageで動作する管理フローです。Firestore、Firebase接続、WebRTC、カメラ映像はこの画面では扱いません。
+          Firestore保存版です。カメラ映像、WebRTC、録画、Firebase Authentication はこの画面では扱いません。
+        </div>
+        <div class="screen-card" style="box-shadow:none;">
+          <div class="screen-title">
+            <div>
+              <h2 style="font-size:1.35rem;">Firestore接続</h2>
+              <p>${firestoreReady ? "接続済み。別端末でも同じ管理データを共有します。" : "未接続"}</p>
+            </div>
+            <button id="migrateLocalStorage" class="secondary-button" type="button">localStorageデータをFirestoreへ移行</button>
+          </div>
+          <p id="statusMessage" class="status-message"></p>
         </div>
       </section>
     `;
     on("goRoster", "click", () => navigate("rosterMenu"));
     on("goTournament", "click", () => navigate("tournamentMenu"));
     on("goLogin", "click", () => navigate("loginStep1"));
+    on("migrateLocalStorage", "click", migrateLocalStorageToFirestore);
   }
 
   function renderRosterMenu() {
@@ -547,7 +782,7 @@
     on("saveOfficer", "click", () => saveOfficer(officerId));
   }
 
-  function saveOfficer(officerId) {
+  async function saveOfficer(officerId) {
     const officerName = getValue("officerName");
     if (!officerName) {
       setStatus("名前を入力してください。", "error");
@@ -580,8 +815,18 @@
       officers.push(payload);
     }
 
-    saveOfficers(officers);
-    navigate("officerComplete", { officerId: payload.officerId, mode: existingIndex >= 0 ? "edit" : "new" });
+    try {
+      setStatus("Firestoreへ保存しています…");
+      await rosterRef(payload.officerId).set(toFirestoreOfficer(payload), { merge: true });
+      if (existingIndex >= 0) {
+        dataCache.officers[existingIndex] = payload;
+      } else {
+        dataCache.officers.push(payload);
+      }
+      navigate("officerComplete", { officerId: payload.officerId, mode: existingIndex >= 0 ? "edit" : "new" });
+    } catch (error) {
+      setStatus(`保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+    }
   }
 
   function renderOfficerComplete(params) {
@@ -902,15 +1147,20 @@
         added += 1;
       }
     });
-    saveOfficers(officers);
     const message = [
       `CSVインポート完了: 追加 ${added}件 / 更新 ${updated}件 / エラー ${errors.length}件`,
       ...errors.slice(0, 12),
       errors.length > 12 ? `ほか ${errors.length - 12}件のエラーがあります。` : "",
     ].filter(Boolean).join("\n");
-    renderRosterList();
-    document.getElementById("csvResult")?.classList.remove("hidden");
-    setCsvResult(message, errors.length ? "error" : "success");
+    try {
+      await saveOfficers(officers);
+      renderRosterList();
+      document.getElementById("csvResult")?.classList.remove("hidden");
+      setCsvResult(message, errors.length ? "error" : "success");
+    } catch (error) {
+      document.getElementById("csvResult")?.classList.remove("hidden");
+      setCsvResult(`CSVのFirestore保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+    }
   }
 
   function exportRosterCsv() {
@@ -938,6 +1188,35 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  async function migrateLocalStorageToFirestore() {
+    if (!window.confirm("localStorageに残っているRE-1.1データをFirestoreへ移行します。既存の同じIDは更新扱いにします。実行しますか？")) {
+      return;
+    }
+    try {
+      setStatus("localStorageデータをFirestoreへ移行しています…");
+      const localOfficers = readLocalArray(STORAGE_KEYS.officers).map(normalizeOfficer);
+      const localTournaments = readLocalArray(STORAGE_KEYS.tournaments).map(normalizeTournament);
+      const localSessions = readLocalArray(STORAGE_KEYS.loginSessions).map(normalizeLoginSession);
+
+      if (localOfficers.length) await saveOfficers(mergeById(readOfficers(), localOfficers, "officerId"));
+      for (const tournament of localTournaments) {
+        await saveTournamentDocAndAssignments(tournament);
+      }
+      if (localSessions.length) await saveLoginSessions(mergeById(readLoginSessions(), localSessions, "sessionId"));
+      await refreshFirestoreData({ silent: true });
+      renderHome();
+      setStatus(`Firestore移行完了: ロースター ${localOfficers.length}件 / 大会 ${localTournaments.length}件 / ログイン履歴 ${localSessions.length}件`, "success");
+    } catch (error) {
+      setStatus(`Firestore移行に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+    }
+  }
+
+  function mergeById(currentItems, incomingItems, key) {
+    const map = new Map(currentItems.map((item) => [item[key], item]));
+    incomingItems.forEach((item) => map.set(item[key], item));
+    return Array.from(map.values());
   }
 
   function renderTournamentMenu() {
@@ -1220,6 +1499,34 @@
       }));
   }
 
+  async function saveAssignmentsForTournament(tournament) {
+    const selectedOfficers = Array.isArray(tournament.selectedOfficers) ? tournament.selectedOfficers : [];
+    const batch = db.batch();
+    const selectedIds = new Set(selectedOfficers.map((selected) => selected.officerId));
+    const existing = await db.collection("tournaments").doc(tournament.tournamentId).collection("camera_assignments").get();
+    existing.docs.forEach((doc) => {
+      if (!selectedIds.has(doc.id)) batch.delete(doc.ref);
+    });
+    selectedOfficers.forEach((selected, index) => {
+      const officer = getOfficerById(selected.officerId) || selected;
+      const assignment = toFirestoreAssignment(tournament, officer, index);
+      batch.set(assignmentRef(tournament.tournamentId, assignment.assignmentId), assignment, { merge: true });
+    });
+    await batch.commit();
+  }
+
+  async function saveTournamentDocAndAssignments(tournament) {
+    const normalized = normalizeTournament(tournament);
+    await tournamentSettingsRef(normalized.tournamentId).set(toFirestoreTournament(normalized), { merge: true });
+    const existingIndex = dataCache.tournaments.findIndex((item) => item.tournamentId === normalized.tournamentId);
+    if (existingIndex >= 0) {
+      dataCache.tournaments[existingIndex] = normalized;
+    } else {
+      dataCache.tournaments.push(normalized);
+    }
+    await saveAssignmentsForTournament(normalized);
+  }
+
   function tournamentSummaryHtml(draft, selectedOfficers, clickable = false) {
     const clickClass = clickable ? " clickable" : "";
     const attr = (target) => (clickable ? ` data-edit-target="${target}"` : "");
@@ -1254,7 +1561,7 @@
     `;
   }
 
-  function saveTournament(mode) {
+  async function saveTournament(mode) {
     const draft = state.tournamentDraft;
     if (!draft) return;
     const total = selectedTotalCount(draft);
@@ -1283,14 +1590,14 @@
       updatedAt: now,
     });
 
-    if (existingIndex >= 0) {
-      tournaments[existingIndex] = payload;
-    } else {
-      tournaments.push(payload);
+    try {
+      setStatus("Firestoreへ大会設定と競技委員割当を保存しています…");
+      await saveTournamentDocAndAssignments(payload);
+      state.tournamentDraft = createTournamentDraft(payload);
+      navigate("tournamentComplete", { tournamentId: payload.tournamentId, mode });
+    } catch (error) {
+      setStatus(`大会設定の保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
     }
-    saveTournaments(tournaments);
-    state.tournamentDraft = createTournamentDraft(payload);
-    navigate("tournamentComplete", { tournamentId: payload.tournamentId, mode });
   }
 
   function renderTournamentComplete(params) {
@@ -1360,7 +1667,7 @@
     on("deleteTournament", "click", () => softDeleteTournamentFromSelect());
   }
 
-  function softDeleteTournamentFromSelect() {
+  async function softDeleteTournamentFromSelect() {
     const tournamentId = getSelectValue("editTournamentId");
     if (!tournamentId) {
       setStatus("削除する大会を選択してください。", "error");
@@ -1375,10 +1682,14 @@
         ? { ...tournament, deleted: true, deletedAt: now, updatedAt: now }
         : tournament,
     );
-    saveTournaments(tournaments);
-    endAllSessions(tournamentId);
-    setStatus("大会設定を削除しました。削除済み大会は通常一覧・ログイン候補に表示されません。", "success");
-    setTimeout(() => navigate("tournamentEditSelect", {}, false), 400);
+    try {
+      await saveTournaments(tournaments);
+      await endAllSessions(tournamentId);
+      setStatus("大会設定を削除しました。削除済み大会は通常一覧・ログイン候補に表示されません。", "success");
+      setTimeout(() => navigate("tournamentEditSelect", {}, false), 400);
+    } catch (error) {
+      setStatus(`大会削除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+    }
   }
 
   function renderTournamentEditReview() {
@@ -1487,14 +1798,22 @@
 
   function bindLoginStatusActions(tournamentId, afterUpdate) {
     if (!tournamentId) return;
-    on("endAllSessions", "click", () => {
+    on("endAllSessions", "click", async () => {
       if (!window.confirm("この大会の active login session をすべて解除しますか？")) return;
-      endAllSessions(tournamentId);
-      afterUpdate();
+      try {
+        await endAllSessions(tournamentId);
+        afterUpdate();
+      } catch (error) {
+        setStatus(`全解除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+      }
     });
-    onAll("[data-end-session]", "click", (event) => {
-      endSession(event.currentTarget.dataset.endSession);
-      afterUpdate();
+    onAll("[data-end-session]", "click", async (event) => {
+      try {
+        await endSession(event.currentTarget.dataset.endSession);
+        afterUpdate();
+      } catch (error) {
+        setStatus(`個別解除に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+      }
     });
   }
 
@@ -1642,7 +1961,7 @@
     bindLoginStatusActions(tournament.tournamentId, () => renderLoginPhoneSelect());
   }
 
-  function createLoginSession({ tournament, loginRole, officerId, officerName, deviceNo }) {
+  async function createLoginSession({ tournament, loginRole, officerId, officerName, deviceNo }) {
     const roleLabel = ROLE_LABELS[loginRole] || loginRole;
     const sessions = readLoginSessions();
     const activeSessions = sessions.filter((session) => session.tournamentId === tournament.tournamentId && session.status !== "ended");
@@ -1658,7 +1977,7 @@
       return;
     }
 
-    if (sameDevice && sameDevice.officerId !== officerId) {
+    if (sameDevice && (!sameOfficer || sameDevice.sessionId !== sameOfficer.sessionId)) {
       const ok = window.confirm(`iPhone No.${deviceNo} は ${sameDevice.officerName || sameDevice.roleLabel} が使用中です。割当を変更しますか？`);
       if (!ok) return;
     }
@@ -1685,8 +2004,14 @@
       updatedAt: now,
     });
     updatedSessions.push(session);
-    saveLoginSessions(updatedSessions);
-    navigate("loginComplete", { sessionId: session.sessionId });
+    try {
+      setStatus("ログイン状態をFirestoreへ保存しています…");
+      await saveLoginSessions(updatedSessions);
+      await saveAssignmentsForTournament(tournament);
+      navigate("loginComplete", { sessionId: session.sessionId });
+    } catch (error) {
+      setStatus(`ログイン状態の保存に失敗しました。\n${firestoreErrorMessage(error)}`, "error");
+    }
   }
 
   function renderLoginComplete(sessionId) {
@@ -1735,5 +2060,5 @@
     on("toHome", "click", () => navigate("home", {}, false));
   }
 
-  render();
+  bootstrap();
 })();
