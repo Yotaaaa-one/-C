@@ -25,6 +25,26 @@
           </label>
           <button id="watchCallsButton" class="camera-button camera-button-primary" type="button">呼出を表示</button>
         </section>
+        <section class="camera-panel ruling-eye-data-panel" aria-label="Ruling Eye大会管理情報">
+          <div class="camera-section-heading"><h2>Ruling Eye大会管理情報</h2></div>
+          <button id="loadRulingEyeAdminButton" class="camera-button camera-button-secondary" type="button">管理情報を読み込む</button>
+          <p id="rulingEyeAdminStatus" class="ruling-eye-status">大会IDを入力して管理情報を読み込んでください。</p>
+          <div id="rulingEyeAdminSummary" class="ruling-eye-summary-grid">
+            <p class="camera-empty">大会設定は未読込です。</p>
+          </div>
+          <div class="ruling-eye-subsection">
+            <h3>大会割当一覧</h3>
+            <div id="rulingEyeAssignmentList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
+          </div>
+          <div class="ruling-eye-subsection">
+            <h3>ログイン状態一覧</h3>
+            <div id="rulingEyeLoginList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
+          </div>
+          <div class="ruling-eye-subsection">
+            <h3>将来の呼出候補</h3>
+            <div id="rulingEyeCallCandidateList" class="ruling-eye-list"><p class="camera-empty">RE-3.0では表示のみです。</p></div>
+          </div>
+        </section>
         <section class="camera-panel roster-panel" aria-label="競技委員ロースター管理">
           <div class="camera-section-heading"><h2>競技委員ロースター</h2></div>
           <input id="rosterOfficerName" type="text" placeholder="競技委員名">
