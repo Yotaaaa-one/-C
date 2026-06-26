@@ -371,6 +371,55 @@ button:disabled,
   min-width: 150px;
 }
 
+.auto-refresh-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  border: 1px solid rgba(15, 95, 143, 0.22);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--primary-soft);
+}
+
+.auto-refresh-panel.off {
+  border-color: rgba(168, 107, 0, 0.28);
+  background: var(--warning-soft);
+}
+
+.auto-refresh-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.auto-refresh-panel strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--primary-dark);
+  font-size: 1.08rem;
+}
+
+.auto-refresh-panel.off strong {
+  color: var(--warning);
+}
+
+.auto-refresh-panel p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.auto-refresh-notice {
+  border: 1px solid rgba(168, 107, 0, 0.28);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--warning-soft);
+}
+
 .maintenance-card {
   border: 1px solid #f0d28a;
   border-radius: var(--radius-lg);
@@ -908,6 +957,15 @@ button:disabled,
 
   .screen-title {
     display: grid;
+  }
+
+  .auto-refresh-panel {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .auto-refresh-panel > button {
+    width: 100%;
   }
 
   .menu-button {

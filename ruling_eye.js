@@ -27,6 +27,7 @@
     officers: [],
     tournaments: [],
     loginSessions: [],
+    assignmentsByTournament: new Map(),
   };
 
   let db = null;
@@ -48,6 +49,11 @@
     tournamentDraft: null,
     loginDraft: null,
     lastLoadedAt: null,
+    lastAutoUpdatedAt: null,
+    autoRefreshEnabled: true,
+    watchedTournamentId: null,
+    snapshotUnsubscribes: [],
+    pendingExternalUpdate: false,
     operationBusy: false,
     globalMessage: null,
   };
@@ -123,6 +129,14 @@
 
   function assignmentRef(tournamentId, assignmentId) {
     return db.collection("tournaments").doc(tournamentId).collection("camera_assignments").doc(assignmentId);
+  }
+
+  function assignmentCollectionRef(tournamentId) {
+    return db.collection("tournaments").doc(tournamentId).collection("camera_assignments");
+  }
+
+  function loginSessionCollectionRef(tournamentId) {
+    return db.collection("tournaments").doc(tournamentId).collection("ruling_eye_login_sessions");
   }
 
   function loginSessionRef(tournamentId, sessionId) {
@@ -208,6 +222,201 @@
       </div>
       ${state.globalMessage ? `<div id="globalMessage" class="status-message ${escapeHtml(state.globalMessage.type || "")}">${escapeHtml(state.globalMessage.message)}</div>` : ""}
     `;
+  }
+
+  function isLoginRoute(route = state.route) {
+    return ["loginStep1", "loginRole", "loginOfficerSelect", "loginPhoneSelect", "loginComplete"].includes(route);
+  }
+
+  function activeInputIsBeingEdited() {
+    const element = document.activeElement;
+    if (!element || !app.contains(element)) return false;
+    return ["INPUT", "SELECT", "TEXTAREA"].includes(element.tagName);
+  }
+
+  function currentRouteTournamentId() {
+    if (state.route === "loginStep1") return state.params.tournamentId || state.watchedTournamentId || "";
+    if (state.route === "loginComplete") {
+      const sessionId = state.params.sessionId || "";
+      const session = readLoginSessions().find((item) => item.sessionId === sessionId);
+      return session?.tournamentId || state.loginDraft?.tournamentId || state.watchedTournamentId || "";
+    }
+    return state.loginDraft?.tournamentId || state.watchedTournamentId || "";
+  }
+
+  function autoRefreshPanelHtml(tournamentId) {
+    if (!tournamentId) return "";
+    const isWatching = state.autoRefreshEnabled && state.watchedTournamentId === tournamentId && state.snapshotUnsubscribes.length > 0;
+    const statusText = state.autoRefreshEnabled ? (isWatching ? "自動更新中" : "自動更新待機中") : "自動更新OFF";
+    const statusClass = state.autoRefreshEnabled ? "on" : "off";
+    return `
+      <div class="auto-refresh-panel ${statusClass}">
+        <div>
+          <span class="auto-refresh-kicker">Firestore自動更新</span>
+          <strong id="autoRefreshStatusText">${escapeHtml(statusText)}</strong>
+          <p id="autoRefreshTimeText">最終自動更新: ${escapeHtml(formatDateTimeWithSeconds(state.lastAutoUpdatedAt))}</p>
+        </div>
+        <button id="toggleAutoRefreshButton" class="${state.autoRefreshEnabled ? "secondary-button" : "primary-button"}" type="button">
+          ${state.autoRefreshEnabled ? "自動更新 ON" : "自動更新 OFF"}
+        </button>
+      </div>
+      ${
+        state.pendingExternalUpdate
+          ? `<div class="status-message warning auto-refresh-notice">別端末で更新がありました。編集中の入力値は自動では上書きしていません。必要に応じて「最新データを取得」を押してください。</div>`
+          : ""
+      }
+    `;
+  }
+
+  function updateAutoRefreshDom() {
+    const statusText = document.getElementById("autoRefreshStatusText");
+    const timeText = document.getElementById("autoRefreshTimeText");
+    if (statusText) {
+      const isWatching = state.autoRefreshEnabled && state.snapshotUnsubscribes.length > 0;
+      statusText.textContent = state.autoRefreshEnabled ? (isWatching ? "自動更新中" : "自動更新待機中") : "自動更新OFF";
+    }
+    if (timeText) {
+      timeText.textContent = `最終自動更新: ${formatDateTimeWithSeconds(state.lastAutoUpdatedAt)}`;
+    }
+  }
+
+  function unsubscribeAutoRefresh() {
+    state.snapshotUnsubscribes.forEach((unsubscribe) => {
+      try {
+        if (typeof unsubscribe === "function") unsubscribe();
+      } catch (error) {
+        console.warn("Firestore auto refresh unsubscribe failed", error);
+      }
+    });
+    state.snapshotUnsubscribes = [];
+    state.watchedTournamentId = null;
+  }
+
+  function upsertTournamentFromSnapshot(tournamentId, data) {
+    const normalized = normalizeTournament({ tournamentId, ...data });
+    const index = dataCache.tournaments.findIndex((tournament) => tournament.tournamentId === normalized.tournamentId);
+    if (index >= 0) {
+      dataCache.tournaments[index] = normalized;
+    } else {
+      dataCache.tournaments.push(normalized);
+    }
+  }
+
+  function replaceTournamentSessionsFromSnapshot(tournamentId, snapshot) {
+    const nextSessions = snapshot.docs.map((doc) => normalizeLoginSession({ tournamentId, sessionId: doc.id, ...doc.data() }));
+    dataCache.loginSessions = [
+      ...dataCache.loginSessions.filter((session) => session.tournamentId !== tournamentId),
+      ...nextSessions,
+    ];
+  }
+
+  function replaceTournamentAssignmentsFromSnapshot(tournamentId, snapshot) {
+    dataCache.assignmentsByTournament.set(
+      tournamentId,
+      snapshot.docs.map((doc) => ({ assignmentId: doc.id, tournamentId, ...doc.data() })),
+    );
+  }
+
+  function handleAutoSnapshot(tournamentId) {
+    const updatedAt = nowIso();
+    state.lastAutoUpdatedAt = updatedAt;
+    state.lastLoadedAt = updatedAt;
+
+    if (activeInputIsBeingEdited()) {
+      state.pendingExternalUpdate = true;
+      state.globalMessage = {
+        type: "warning",
+        message: "別端末で更新がありました。編集中の入力値は自動では上書きしていません。必要に応じて「最新データを取得」を押してください。",
+      };
+      updateAutoRefreshDom();
+      const message = document.getElementById("globalMessage");
+      if (message) {
+        message.className = "status-message warning";
+        message.textContent = state.globalMessage.message;
+      }
+      return;
+    }
+
+    state.pendingExternalUpdate = false;
+    state.globalMessage = { type: "success", message: "自動更新で最新データを反映しました。" };
+    if (isLoginRoute() && currentRouteTournamentId() === tournamentId) {
+      render();
+    } else {
+      updateAutoRefreshDom();
+    }
+  }
+
+  function handleAutoSnapshotError(error) {
+    console.error("Firestore auto refresh failed", error);
+    state.globalMessage = {
+      type: "error",
+      message: shortFirestoreError("Firestore自動更新", error),
+    };
+    setStatus(state.globalMessage.message, "error", firestoreErrorMessage(error));
+  }
+
+  function startAutoRefreshForTournament(tournamentId) {
+    if (!state.autoRefreshEnabled || !firestoreReady || !db || !tournamentId) {
+      unsubscribeAutoRefresh();
+      updateAutoRefreshDom();
+      return;
+    }
+    if (state.watchedTournamentId === tournamentId && state.snapshotUnsubscribes.length > 0) {
+      updateAutoRefreshDom();
+      return;
+    }
+
+    unsubscribeAutoRefresh();
+    state.watchedTournamentId = tournamentId;
+    state.snapshotUnsubscribes = [
+      tournamentSettingsRef(tournamentId).onSnapshot(
+        (doc) => {
+          if (doc.exists) upsertTournamentFromSnapshot(tournamentId, doc.data());
+          handleAutoSnapshot(tournamentId);
+        },
+        handleAutoSnapshotError,
+      ),
+      assignmentCollectionRef(tournamentId).onSnapshot(
+        (snapshot) => {
+          replaceTournamentAssignmentsFromSnapshot(tournamentId, snapshot);
+          handleAutoSnapshot(tournamentId);
+        },
+        handleAutoSnapshotError,
+      ),
+      loginSessionCollectionRef(tournamentId).onSnapshot(
+        (snapshot) => {
+          replaceTournamentSessionsFromSnapshot(tournamentId, snapshot);
+          handleAutoSnapshot(tournamentId);
+        },
+        handleAutoSnapshotError,
+      ),
+    ];
+    updateAutoRefreshDom();
+  }
+
+  function syncAutoRefreshForLoginTournament(tournamentId) {
+    if (!isLoginRoute() || !tournamentId || !state.autoRefreshEnabled) {
+      unsubscribeAutoRefresh();
+      updateAutoRefreshDom();
+      return;
+    }
+    startAutoRefreshForTournament(tournamentId);
+  }
+
+  function bindAutoRefreshToggle(tournamentId) {
+    on("toggleAutoRefreshButton", "click", () => {
+      state.autoRefreshEnabled = !state.autoRefreshEnabled;
+      state.pendingExternalUpdate = false;
+      state.globalMessage = state.autoRefreshEnabled
+        ? { type: "success", message: "自動更新をONにしました。" }
+        : { type: "warning", message: "自動更新をOFFにしました。必要な場合は「最新データを取得」で手動更新してください。" };
+      if (state.autoRefreshEnabled) {
+        startAutoRefreshForTournament(tournamentId);
+      } else {
+        unsubscribeAutoRefresh();
+      }
+      render();
+    });
   }
 
   function readOfficers() {
@@ -607,6 +816,9 @@
     if (push && state.route) {
       state.stack.push({ route: state.route, params: state.params });
     }
+    if (isLoginRoute(state.route) && !isLoginRoute(route)) {
+      unsubscribeAutoRefresh();
+    }
     state.route = route;
     state.params = params;
     render();
@@ -616,6 +828,9 @@
   function goBack(fallback = "home") {
     const previous = state.stack.pop();
     if (previous) {
+      if (isLoginRoute(state.route) && !isLoginRoute(previous.route)) {
+        unsubscribeAutoRefresh();
+      }
       state.route = previous.route;
       state.params = previous.params || {};
       render();
@@ -662,7 +877,7 @@
           <span class="loading-spinner" aria-hidden="true"></span>
           <strong>${escapeHtml(message)}</strong>
         </div>
-        <div class="note-box">ロースター、大会設定、ログイン状態をFirestoreから取得しています。自動更新は行わず、更新ボタンで最新化します。</div>
+        <div class="note-box">ロースター、大会設定、ログイン状態をFirestoreから取得しています。大会ログイン画面では自動更新を使用し、必要に応じて更新ボタンでも最新化できます。</div>
       </section>
     `;
   }
@@ -710,6 +925,7 @@
   async function refreshFirestoreData({ silent = false } = {}) {
     if (!silent) renderLoading();
     await loadFirestoreData();
+    state.pendingExternalUpdate = false;
     state.globalMessage = { type: "success", message: "最新データを取得しました。" };
     if (!silent) render();
   }
@@ -734,6 +950,7 @@
         { workingMessage: "更新中です…", successMessage: "最新データを取得しました。", actionName: "Firestoreの読み込み", rerender: true },
         async () => {
           await loadFirestoreData();
+          state.pendingExternalUpdate = false;
         },
       );
     });
@@ -804,7 +1021,7 @@
       <section class="screen">
         <div class="hero-card">
           <h2>Ruling Eye</h2>
-          <p>競技委員 映像裁定支援システム｜Firestore管理導線 Phase RE-2.1</p>
+          <p>競技委員 映像裁定支援システム｜Firestore管理導線 Phase RE-2.2</p>
         </div>
         ${statusDashboardHtml()}
         <div class="menu-grid">
@@ -813,7 +1030,7 @@
           ${mainMenuButton("goLogin", "大会ログイン", "本部 / 委員長 / 競技委員")}
         </div>
         <div class="note-box">
-          Firestore保存版です。自動更新は行いません。「最新データを取得」で手動更新してください。
+          Firestore保存版です。大会ログイン画面ではログイン状態・iPhone No.使用状況を自動更新します。手動確認や通信復旧には「最新データを取得」を使用してください。
         </div>
         <div class="maintenance-card">
           <div class="screen-title">
@@ -1866,6 +2083,7 @@
     const tournamentsInYear = tournaments.filter((tournament) => tournament.year === selectedYear);
     const selectedTournamentId = tournamentId || tournamentsInYear[0]?.tournamentId || "";
     const selectedTournament = selectedTournamentId ? getTournamentById(selectedTournamentId) : null;
+    const autoRefreshPanel = selectedTournament ? autoRefreshPanelHtml(selectedTournament.tournamentId) : "";
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン", "年度と大会名を選択してログインに進みます。ログイン状態の個別解除 / 全解除もできます。")}
@@ -1891,6 +2109,7 @@
               <div class="next-actions">
                 <button id="loginTournament" class="primary-button" type="button">ログイン</button>
               </div>
+              ${autoRefreshPanel}
               ${selectedTournament ? phoneUsagePanelHtml(selectedTournament) : ""}
               ${selectedTournament ? loginStatusPanelHtml(selectedTournament.tournamentId) : ""}
             `
@@ -1900,6 +2119,12 @@
     `;
     bindBack("home");
     bindRefreshButton();
+    if (selectedTournamentId) {
+      bindAutoRefreshToggle(selectedTournamentId);
+      syncAutoRefreshForLoginTournament(selectedTournamentId);
+    } else {
+      syncAutoRefreshForLoginTournament("");
+    }
     on("loginYear", "change", () => navigate("loginStep1", { year: getSelectValue("loginYear") }, false));
     on("loginTournamentId", "change", () => navigate("loginStep1", { year: selectedYear, tournamentId: getSelectValue("loginTournamentId") }, false));
     on("loginTournament", "click", () => {
@@ -2022,9 +2247,11 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    const autoRefreshPanel = autoRefreshPanelHtml(tournament.tournamentId);
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン｜ログイン者選択", tournament.tournamentName)}
+        ${autoRefreshPanel}
         <div class="choice-list">
           <button id="loginHeadquarters" class="choice-button" type="button">
             <strong>大会本部</strong>
@@ -2045,6 +2272,8 @@
       </section>
     `;
     bindBack("loginStep1");
+    bindAutoRefreshToggle(tournament.tournamentId);
+    syncAutoRefreshForLoginTournament(tournament.tournamentId);
     on("loginHeadquarters", "click", () => createLoginSession({
       tournament,
       loginRole: "hq",
@@ -2079,12 +2308,14 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    const autoRefreshPanel = autoRefreshPanelHtml(tournament.tournamentId);
     const { mapByOfficer } = assignmentMap(tournament.tournamentId);
     const selectedOfficers = (Array.isArray(tournament.selectedOfficers) ? tournament.selectedOfficers : [])
       .filter((officer) => !(tournament.chiefOfficerId && tournament.chiefOfficerId !== "other" && officer.officerId === tournament.chiefOfficerId));
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン｜競技委員選択", `${tournament.tournamentName}｜委員長は通常競技委員の選択肢から除外しています。`)}
+        ${autoRefreshPanel}
         ${assignmentSummaryPanelHtml(tournament)}
         ${
           selectedOfficers.length
@@ -2108,6 +2339,8 @@
       </section>
     `;
     bindBack("loginRole");
+    bindAutoRefreshToggle(tournament.tournamentId);
+    syncAutoRefreshForLoginTournament(tournament.tournamentId);
     onAll("[data-login-officer]", "click", (event) => {
       const officerId = event.currentTarget.dataset.loginOfficer;
       const officer = selectedOfficers.find((item) => item.officerId === officerId);
@@ -2127,12 +2360,14 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    const autoRefreshPanel = autoRefreshPanelHtml(tournament.tournamentId);
     const { mapByDevice, mapByOfficer } = assignmentMap(tournament.tournamentId);
     const currentOfficerSession = mapByOfficer.get(state.loginDraft.officerId);
     app.innerHTML = `
       <section class="screen-card">
         ${screenHeader("大会ログイン｜iPhone No.選択", `${state.loginDraft.officerName}｜通常競技委員は No.2〜No.7 のみ選択できます。`)}
         ${currentOfficerSession?.deviceNo ? `<div class="note-box">この競技委員は既に iPhone No.${escapeHtml(currentOfficerSession.deviceNo)} でログイン済みです。別番号を選ぶと変更確認を出します。</div>` : ""}
+        ${autoRefreshPanel}
         ${phoneUsagePanelHtml(tournament)}
         <div class="phone-grid">
           ${["2", "3", "4", "5", "6", "7"]
@@ -2152,6 +2387,8 @@
       </section>
     `;
     bindBack("loginOfficerSelect");
+    bindAutoRefreshToggle(tournament.tournamentId);
+    syncAutoRefreshForLoginTournament(tournament.tournamentId);
     onAll("[data-phone-no]", "click", (event) => {
       createLoginSession({
         tournament,
@@ -2221,6 +2458,7 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    const autoRefreshPanel = autoRefreshPanelHtml(session.tournamentId);
     const destination =
       session.loginRole === "hq"
         ? "大会本部としてログイン"
@@ -2232,6 +2470,7 @@
         <div class="completion-icon">✓</div>
         <h2>${escapeHtml(session.roleLabel)}</h2>
         <p>${escapeHtml(destination)}</p>
+        ${autoRefreshPanel}
         <div class="summary-grid">
           <dl class="summary-item">
             <dt>大会名</dt>
@@ -2257,9 +2496,13 @@
         </div>
       </section>
     `;
+    bindAutoRefreshToggle(session.tournamentId);
+    syncAutoRefreshForLoginTournament(session.tournamentId);
     on("toLogin", "click", () => navigate("loginStep1"));
     on("toHome", "click", () => navigate("home", {}, false));
   }
+
+  window.addEventListener("pagehide", unsubscribeAutoRefresh);
 
   bootstrap();
 })();
