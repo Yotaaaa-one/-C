@@ -17,74 +17,38 @@
       <p id="adminConnectionStatus" class="camera-status" role="status" data-tone="idle">大会IDを入力してください</p>
     </header>
 
+    <section class="camera-admin-command-bar" aria-label="大会管理コントロール">
+      <div class="camera-admin-command-controls">
+        <label class="camera-field">大会ID
+          <input id="tournamentId" type="text" autocomplete="off" placeholder="例: 2026_01">
+        </label>
+        <button id="loadRulingEyeAdminButton" class="camera-button camera-button-primary" type="button">最新データ取得</button>
+        <button id="watchCallsButton" class="camera-button camera-button-secondary" type="button">呼出監視を開始</button>
+      </div>
+      <div class="camera-admin-overview">
+        <div><span>大会ID</span><strong id="adminTournamentId">未選択</strong></div>
+        <div><span>大会名</span><strong id="adminTournamentName">未読込</strong></div>
+        <div><span>最終読込</span><strong id="adminLastLoaded">-</strong></div>
+        <div><span>自動監視</span><strong id="adminMonitoringStatus">停止中</strong></div>
+      </div>
+      <p id="rulingEyeAdminStatus" class="ruling-eye-status">大会IDを入力して「最新データ取得」を押してください。</p>
+    </section>
+
     <section class="camera-admin-layout">
       <aside class="camera-sidebar">
-        <section class="camera-panel tournament-panel">
-          <label class="camera-field">大会ID
-            <input id="tournamentId" type="text" autocomplete="off" placeholder="例: 2026_01">
-          </label>
-          <button id="watchCallsButton" class="camera-button camera-button-primary" type="button">呼出を表示</button>
-        </section>
-        <section class="camera-panel ruling-eye-data-panel" aria-label="Ruling Eye大会管理情報">
-          <div class="camera-section-heading"><h2>Ruling Eye大会管理情報</h2></div>
-          <button id="loadRulingEyeAdminButton" class="camera-button camera-button-secondary" type="button">管理情報を読み込む</button>
-          <p id="rulingEyeAdminStatus" class="ruling-eye-status">大会IDを入力して管理情報を読み込んでください。</p>
-          <div id="rulingEyeAdminSummary" class="ruling-eye-summary-grid">
-            <p class="camera-empty">大会設定は未読込です。</p>
+        <section class="camera-panel ruling-eye-call-targets camera-admin-primary-panel" aria-label="Ruling Eye呼出対象">
+          <div>
+            <h2>Ruling Eye呼出対象</h2>
+            <p class="ruling-eye-call-target-note">ログイン状態と競技委員端末の待機状態を表示します。</p>
           </div>
-          <div class="ruling-eye-subsection">
-            <h3>大会割当一覧</h3>
-            <div id="rulingEyeAssignmentList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
-          </div>
-          <div class="ruling-eye-subsection">
-            <h3>ログイン状態一覧</h3>
-            <div id="rulingEyeLoginList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
-          </div>
-          <div class="ruling-eye-subsection ruling-eye-call-targets">
-            <div>
-              <h3>Ruling Eye呼出対象</h3>
-              <p class="ruling-eye-call-target-note">ruling_eye.html でactiveログイン中の競技委員長・競技委員だけを表示します。</p>
-            </div>
-            <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
-              <p class="camera-empty">管理情報を読み込むと、iPhone No.1〜No.7のログイン状態を表示します。</p>
-            </div>
+          <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
+            <p class="camera-empty">最新データを取得すると、iPhone No.1〜No.7の状態を表示します。</p>
           </div>
         </section>
-        <section class="camera-panel roster-panel" aria-label="競技委員ロースター管理">
-          <div class="camera-section-heading"><h2>競技委員ロースター</h2></div>
-          <input id="rosterOfficerName" type="text" placeholder="競技委員名">
-          <select id="rosterCategory"><option value="specialist">専門競技委員</option><option value="registered">登録競技委員</option></select>
-          <input id="rosterNote" type="text" placeholder="メモ（任意）">
-          <div class="camera-wait-actions"><button id="saveRosterButton" class="camera-button camera-button-primary" type="button">ロースターへ追加</button><button id="cancelRosterEditButton" class="camera-button camera-button-secondary" type="button" hidden>編集取消</button></div>
-          <div class="camera-csv-actions">
-            <input id="rosterCsvInput" type="file" accept=".csv,text/csv" hidden>
-            <button id="importRosterButton" class="camera-button camera-button-secondary" type="button">CSVインポート</button>
-            <button id="exportRosterButton" class="camera-button camera-button-secondary" type="button">CSVエクスポート</button>
-          </div>
-          <p id="rosterCsvResult" class="camera-csv-result" aria-live="polite">CSV形式: officerId,officerName,category,active,note</p>
-          <details class="camera-csv-sample"><summary>CSV形式サンプル</summary><pre>officerId,officerName,category,active,note
-sp001,専門競技委員A,specialist,true,専門競技委員
-rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
-          <div id="rosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
-        </section>
-        <section class="camera-panel assignment-panel" aria-label="大会用ロースター選抜">
-          <div class="camera-section-heading"><h2>大会用ロースター選抜</h2></div>
-          <p id="assignmentWarning" class="camera-assignment-warning">大会IDを入力すると、5〜7名を端末へ割り当てできます。</p>
-          <div id="assignmentRosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
-          <button id="saveAssignmentsButton" class="camera-button camera-button-primary" type="button" disabled>大会用割当を保存</button>
-        </section>
-        <section class="camera-call-list-section" aria-label="既存待機・割当一覧">
-          <div class="camera-section-heading">
-            <h2>既存待機・割当一覧</h2>
-            <span id="officerCount" class="camera-count">0</span>
-          </div>
-          <div id="officerList" class="camera-call-list">
-            <p class="camera-empty">大会IDを入力して待機中の競技委員を表示してください。</p>
-          </div>
-        </section>
+
         <section class="camera-panel hq-request-panel" aria-label="本部から映像依頼">
           <div class="camera-section-heading"><h2>本部から映像依頼</h2></div>
-          <p id="selectedOfficer" class="camera-selected-officer">競技委員を選択してください</p>
+          <p id="selectedOfficer" class="camera-selected-officer">待機中の競技委員を選択してください</p>
           <label class="camera-field">ホール番号<input id="requestHole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 8"></label>
           <label class="camera-field">組番号<input id="requestGroupNo" type="text" inputmode="numeric" placeholder="例: 12"></label>
           <label class="camera-field">理由
@@ -94,19 +58,77 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
           </label>
           <button id="sendRequestButton" class="camera-button camera-button-primary" type="button" disabled>映像依頼</button>
         </section>
-        <section class="camera-call-list-section" aria-label="映像依頼の状態一覧">
-          <div class="camera-section-heading"><h2>映像依頼の状態一覧</h2></div>
-          <div id="hqCallList" class="camera-call-list"><p class="camera-empty">映像依頼はありません。</p></div>
-        </section>
-        <section class="camera-call-list-section" aria-label="既存映像セッション">
-          <div class="camera-section-heading">
-            <h2>既存映像セッション</h2>
-            <span id="callCount" class="camera-count">0</span>
+
+        <details class="camera-admin-details">
+          <summary>依頼・履歴</summary>
+          <div class="camera-admin-details-content">
+            <section class="camera-call-list-section" aria-label="映像依頼の状態一覧">
+              <div class="camera-section-heading"><h2>映像依頼の状態一覧</h2></div>
+              <div id="hqCallList" class="camera-call-list"><p class="camera-empty">映像依頼はありません。</p></div>
+            </section>
+            <section class="camera-call-list-section" aria-label="既存映像セッション">
+              <div class="camera-section-heading">
+                <h2>既存映像セッション</h2>
+                <span id="callCount" class="camera-count">0</span>
+              </div>
+              <div id="callList" class="camera-call-list">
+                <p class="camera-empty">大会IDを入力して呼出を表示してください。</p>
+              </div>
+            </section>
           </div>
-          <div id="callList" class="camera-call-list">
-            <p class="camera-empty">大会IDを入力して呼出を表示してください。</p>
+        </details>
+
+        <details class="camera-admin-details">
+          <summary>管理情報・ログイン・割当</summary>
+          <div class="camera-admin-details-content">
+            <section class="camera-panel ruling-eye-data-panel" aria-label="Ruling Eye大会管理情報">
+              <div class="camera-section-heading"><h2>Ruling Eye大会管理情報</h2></div>
+              <div id="rulingEyeAdminSummary" class="ruling-eye-summary-grid">
+                <p class="camera-empty">大会設定は未読込です。</p>
+              </div>
+              <div class="ruling-eye-subsection">
+                <h3>大会割当一覧</h3>
+                <div id="rulingEyeAssignmentList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
+              </div>
+              <div class="ruling-eye-subsection">
+                <h3>ログイン状態一覧</h3>
+                <div id="rulingEyeLoginList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
+              </div>
+            </section>
+            <section class="camera-panel roster-panel" aria-label="競技委員ロースター管理">
+              <div class="camera-section-heading"><h2>競技委員ロースター</h2></div>
+              <input id="rosterOfficerName" type="text" placeholder="競技委員名">
+              <select id="rosterCategory"><option value="specialist">専門競技委員</option><option value="registered">登録競技委員</option></select>
+              <input id="rosterNote" type="text" placeholder="メモ（任意）">
+              <div class="camera-wait-actions"><button id="saveRosterButton" class="camera-button camera-button-primary" type="button">ロースターへ追加</button><button id="cancelRosterEditButton" class="camera-button camera-button-secondary" type="button" hidden>編集取消</button></div>
+              <div class="camera-csv-actions">
+                <input id="rosterCsvInput" type="file" accept=".csv,text/csv" hidden>
+                <button id="importRosterButton" class="camera-button camera-button-secondary" type="button">CSVインポート</button>
+                <button id="exportRosterButton" class="camera-button camera-button-secondary" type="button">CSVエクスポート</button>
+              </div>
+              <p id="rosterCsvResult" class="camera-csv-result" aria-live="polite">CSV形式: officerId,officerName,category,active,note</p>
+              <details class="camera-csv-sample"><summary>CSV形式サンプル</summary><pre>officerId,officerName,category,active,note
+sp001,専門競技委員A,specialist,true,専門競技委員
+rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
+              <div id="rosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
+            </section>
+            <section class="camera-panel assignment-panel" aria-label="大会用ロースター選抜">
+              <div class="camera-section-heading"><h2>大会用ロースター選抜</h2></div>
+              <p id="assignmentWarning" class="camera-assignment-warning">大会IDを入力すると、5〜7名を端末へ割り当てできます。</p>
+              <div id="assignmentRosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
+              <button id="saveAssignmentsButton" class="camera-button camera-button-primary" type="button" disabled>大会用割当を保存</button>
+            </section>
+            <section class="camera-call-list-section" aria-label="既存待機・割当一覧">
+              <div class="camera-section-heading">
+                <h2>既存待機・割当一覧</h2>
+                <span id="officerCount" class="camera-count">0</span>
+              </div>
+              <div id="officerList" class="camera-call-list">
+                <p class="camera-empty">大会IDを入力して待機中の競技委員を表示してください。</p>
+              </div>
+            </section>
           </div>
-        </section>
+        </details>
       </aside>
 
       <section class="camera-viewer-column">
@@ -126,12 +148,12 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
             <button id="unmuteButton" class="camera-button camera-button-secondary" type="button" hidden>音声 ON</button>
           </div>
           <p id="adminError" class="camera-error" role="alert" hidden></p>
-          <section class="camera-debug" aria-label="WebRTCデバッグ">
-            <p class="camera-debug-title">WebRTC デバッグ</p>
+          <details class="camera-debug" aria-label="WebRTCデバッグ">
+            <summary>WebRTC デバッグ</summary>
             <ul id="adminDebug" class="camera-debug-list" aria-live="polite">
               <li>接続する呼出を選択してください</li>
             </ul>
-          </section>
+          </details>
         </section>
 
         <section class="camera-panel camera-memo-panel">

@@ -1022,6 +1022,10 @@
     const rulingEyeAssignmentList = $('rulingEyeAssignmentList');
     const rulingEyeLoginList = $('rulingEyeLoginList');
     const rulingEyeCallCandidateList = $('rulingEyeCallCandidateList');
+    const adminTournamentId = $('adminTournamentId');
+    const adminTournamentName = $('adminTournamentName');
+    const adminLastLoaded = $('adminLastLoaded');
+    const adminMonitoringStatus = $('adminMonitoringStatus');
     const status = $('adminConnectionStatus');
     const error = $('adminError');
     const remoteVideo = $('remoteVideo');
@@ -1090,6 +1094,21 @@
       rulingEyeAdminStatus.textContent = message;
       rulingEyeAdminStatus.dataset.tone = tone;
     }
+    function setAdminMonitoringStatus(message, state = 'idle') {
+      if (!adminMonitoringStatus) return;
+      adminMonitoringStatus.textContent = message;
+      adminMonitoringStatus.dataset.state = state;
+    }
+    function updateAdminOverview(data = rulingEyeAdminData) {
+      const tournamentId = data?.tournamentId || cleanTournamentId(tournamentInput.value) || '未選択';
+      if (adminTournamentId) adminTournamentId.textContent = tournamentId;
+      if (adminTournamentName) {
+        adminTournamentName.textContent = data?.settingExists
+          ? data.setting?.tournamentName || tournamentId
+          : '未読込';
+      }
+      if (adminLastLoaded) adminLastLoaded.textContent = data?.loadedAt ? formatDateTime(data.loadedAt) : '-';
+    }
     function buildRulingEyeCallCandidates(data = rulingEyeAdminData) {
       if (!data?.settingExists || data.setting?.deleted === true || !data?.loginSessions) return [];
       const validDeviceNumbers = new Set(['1', '2', '3', '4', '5', '6', '7']);
@@ -1129,6 +1148,8 @@
             officerName: String(session.officerName),
             deviceNo: String(session.deviceNo),
             assignmentId: assignment?.assignmentId || assignment?.id || '',
+            qualityMode: assignment?.qualityMode || '',
+            qualityLabel: assignment?.qualityLabel || '',
             status: 'active',
             loginAt: session.loginAt || null
           };
@@ -1140,8 +1161,42 @@
       return [...newestByDevice.values()]
         .sort((a, b) => Number(a.deviceNo) - Number(b.deviceNo));
     }
+    function timestampMillis(timestamp) {
+      if (!timestamp) return 0;
+      if (typeof timestamp.toMillis === 'function') return timestamp.toMillis();
+      if (typeof timestamp.toDate === 'function') return timestamp.toDate().getTime();
+      const parsed = new Date(timestamp).getTime();
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    function findCameraOfficerForCandidate(candidate) {
+      if (!candidate) return null;
+      const matches = (left, right) => Boolean(String(left || '').trim() && String(right || '').trim() && String(left) === String(right));
+      const byOfficer = officersCache.find((officer) => matches(officer.officerId || officer.id, candidate.officerId));
+      if (byOfficer) return byOfficer;
+      const byLogin = officersCache.find((officer) => matches(officer.loginSessionId, candidate.sessionId));
+      if (byLogin) return byLogin;
+      const byAssignment = officersCache.find((officer) => matches(officer.assignmentId, candidate.assignmentId));
+      if (byAssignment) return byAssignment;
+      return [...officersCache]
+        .filter((officer) => matches(officer.deviceNo, candidate.deviceNo))
+        .sort((a, b) => timestampMillis(b.lastSeen || b.updatedAt) - timestampMillis(a.lastSeen || a.updatedAt))[0] || null;
+    }
+    function rulingEyeCandidateAvailability(candidate) {
+      if (!candidate) return { key: 'unlogged', label: '未ログイン', action: '呼出不可', officer: null };
+      const officer = findCameraOfficerForCandidate(candidate);
+      if (!officer) return { key: 'not-waiting', label: '未待機', action: '待機開始待ち', officer: null };
+      if (officer.status === 'busy') return { key: 'busy', label: '対応中', action: '対応中', officer };
+      const lastSeen = timestampMillis(officer.lastSeen || officer.updatedAt);
+      if (!lastSeen || Date.now() - lastSeen >= 90000) {
+        return { key: 'stale', label: '未更新', action: '未更新', officer };
+      }
+      if (officer.status === 'online') return { key: 'online', label: '待機中', action: '映像依頼', officer };
+      if (officer.status === 'offline') return { key: 'offline', label: 'オフライン', action: '呼出不可', officer };
+      return { key: 'not-waiting', label: '未待機', action: '待機開始待ち', officer };
+    }
     function renderRulingEyeAdminSummary(data = rulingEyeAdminData) {
       if (!rulingEyeAdminSummary || !data) return;
+      updateAdminOverview(data);
       const setting = data.setting || {};
       if (!data.settingExists) {
         rulingEyeAdminSummary.innerHTML = '<p class="camera-empty">この大会IDのRuling Eye大会設定が見つかりません。ruling_eye.html で大会設定を作成してください。</p>';
@@ -1224,11 +1279,17 @@
       rulingEyeCandidatesBySessionId = new Map(
         rulingEyeCallCandidates.map((candidate) => [candidate.sessionId, candidate])
       );
-      if (selectedOfficerData?.source === 'ruling_eye'
-          && !rulingEyeCandidatesBySessionId.has(selectedOfficerData.sessionId)) {
-        selectedOfficerData = null;
-        selectedOfficer.textContent = '競技委員を選択してください';
-        sendRequestButton.disabled = true;
+      if (selectedOfficerData?.source === 'ruling_eye') {
+        const selectedCandidate = rulingEyeCandidatesBySessionId.get(selectedOfficerData.sessionId);
+        if (!selectedCandidate || rulingEyeCandidateAvailability(selectedCandidate).key !== 'online') {
+          selectedOfficerData = null;
+          selectedOfficer.textContent = '待機中の競技委員を選択してください';
+          sendRequestButton.disabled = true;
+        }
+      }
+      if (!data) {
+        rulingEyeCallCandidateList.innerHTML = '<p class="camera-empty">最新データ取得後に端末状態を表示します。</p>';
+        return;
       }
       if (!data?.settingExists) {
         rulingEyeCallCandidateList.innerHTML = '<p class="camera-empty">この大会IDのRuling Eye大会設定が見つかりません。ruling_eye.html で大会設定を作成してください。</p>';
@@ -1248,27 +1309,39 @@
         const candidate = candidatesByDevice.get(number);
         if (!candidate) {
           return `
-            <article class="ruling-eye-call-target-card is-offline">
+            <article class="ruling-eye-call-target-card state-unlogged">
               <div class="ruling-eye-call-target-main">
                 <strong>No.${number}</strong>
                 <span>${number === '1' ? '競技委員長' : '競技委員'}</span>
               </div>
               <p>未ログイン</p>
-              <em>呼出対象外</em>
+              <em class="admin-state-badge state-unlogged">未ログイン</em>
             </article>
           `;
         }
+        const availability = rulingEyeCandidateAvailability(candidate);
+        const cameraOfficer = availability.officer;
         const selected = selectedOfficerData?.source === 'ruling_eye'
           && selectedOfficerData.sessionId === candidate.sessionId;
+        const quality = cameraOfficer?.qualityLabel
+          || candidate.qualityLabel
+          || QUALITY_MODES[cameraOfficer?.qualityMode || candidate.qualityMode]?.label
+          || '未取得';
+        const lastUpdated = cameraOfficer?.lastSeen || cameraOfficer?.updatedAt || null;
+        const canRequest = availability.key === 'online';
         return `
-          <article class="ruling-eye-call-target-card is-online${selected ? ' is-selected' : ''}">
+          <article class="ruling-eye-call-target-card state-${escapeHtml(availability.key)}${selected ? ' is-selected' : ''}">
             <div class="ruling-eye-call-target-main">
               <strong>No.${escapeHtml(candidate.deviceNo)}</strong>
               <span>${escapeHtml(candidate.roleLabel)}</span>
             </div>
             <p>${escapeHtml(candidate.officerName)}</p>
-            <em>ログイン中</em>
-            <button class="camera-button camera-button-primary" type="button" data-select-ruling-eye="${escapeHtml(candidate.sessionId)}">映像依頼</button>
+            <em class="admin-state-badge state-${escapeHtml(availability.key)}">${escapeHtml(availability.label)}</em>
+            <div class="ruling-eye-call-target-meta">
+              <span>画質: ${escapeHtml(quality)}</span>
+              <span>最終更新: ${escapeHtml(lastUpdated ? formatTime(lastUpdated) : '-')}</span>
+            </div>
+            <button class="camera-button camera-button-primary" type="button" data-select-ruling-eye="${escapeHtml(candidate.sessionId)}"${canRequest ? '' : ' disabled'}>${escapeHtml(availability.action)}</button>
           </article>
         `;
       }).join('')}`;
@@ -1283,6 +1356,8 @@
       try {
         db = db || createFirebase();
         if (loadRulingEyeAdminButton) loadRulingEyeAdminButton.disabled = true;
+        if (adminTournamentId) adminTournamentId.textContent = targetTournamentId;
+        if (adminTournamentName) adminTournamentName.textContent = '読込中';
         setRulingEyeAdminStatus('Ruling Eye大会管理情報を読み込み中です…');
         if (activeTournamentId !== targetTournamentId) {
           await watchCalls();
@@ -1577,7 +1652,8 @@
     function selectedOfficerCanRequest(officer = selectedOfficerData) {
       if (!officer) return false;
       if (officer.source === 'ruling_eye') {
-        return officer.status === 'active'
+        return rulingEyeCandidateAvailability(officer).key === 'online'
+          && officer.status === 'active'
           && ['chief', 'officer'].includes(officer.loginRole)
           && Boolean(officer.deviceNo && officer.officerId && officer.officerName);
       }
@@ -1587,7 +1663,8 @@
       if (!officer) return;
       selectedOfficerData = officer;
       if (officer.source === 'ruling_eye') {
-        selectedOfficer.textContent = `選択中: No.${officer.deviceNo} ${officer.officerName}（${officer.roleLabel} / Ruling Eyeログイン中）`;
+        const availability = rulingEyeCandidateAvailability(officer);
+        selectedOfficer.textContent = `選択中: No.${officer.deviceNo} ${officer.officerName}（${officer.roleLabel} / ${availability.label}）`;
         renderRulingEyeCallCandidates();
       } else {
         selectedOfficer.textContent = `選択中: No.${officer.deviceNo || '-'} ${officer.officerName}（${officerAvailability(officer).label}）`;
@@ -1599,10 +1676,10 @@
       const sorted = calls.sort((a, b) => (b.requestedAt?.toMillis?.() || 0) - (a.requestedAt?.toMillis?.() || 0));
       if (!sorted.length) { hqCallList.innerHTML = '<p class="camera-empty">映像依頼はありません。</p>'; return; }
       hqCallList.innerHTML = sorted.map((call) => {
-        const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '辞退', ended: '完了', missed: '未応答' }[call.status] || call.status;
+        const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '対応不可', ended: '完了', missed: '未応答' }[call.status] || call.status;
         const canReview = call.sessionId && ['accepted', 'connected'].includes(call.status);
         return `<article class="camera-call-card" data-status="${escapeHtml(call.status || '')}">
-          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(call.deviceNo || '-')} / ${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="camera-card-status">${escapeHtml(statusLabel)}</span></div>
+          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(call.deviceNo || '-')} / ${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="admin-state-badge state-call-${escapeHtml(call.status || 'unknown')}">${escapeHtml(statusLabel)}</span></div>
           <div class="camera-card-meta"><span>${escapeHtml(call.hole || '-')}H / ${escapeHtml(call.groupNo || '-')}組</span><time>${formatTime(call.requestedAt)}</time></div>
           <div class="camera-card-meta"><span>${escapeHtml(call.reason || '本部確認')}</span><span>${call.sessionId ? 'session準備済み' : ''}</span></div>
           ${canReview ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(call.sessionId)}">映像を確認</button>` : ''}
@@ -1614,6 +1691,11 @@
       const groupNo = requestGroupNo.value.trim();
       if (!db || !activeTournamentId || !selectedOfficerData || !hole || !groupNo) {
         showError(error, '競技委員、ホール番号、組番号を入力して映像依頼を送信してください。'); return;
+      }
+      if (!selectedOfficerCanRequest()) {
+        showError(error, '対象端末は現在待機中ではないため、映像依頼を送信できません。最新の端末状態を確認してください。');
+        sendRequestButton.disabled = true;
+        return;
       }
       sendRequestButton.disabled = true;
       try {
@@ -1748,24 +1830,29 @@
       try {
         const tournamentChanged = activeTournamentId !== tournamentId;
         db = db || createFirebase();
+        setAdminMonitoringStatus('監視開始中', 'starting');
         if (unsubscribeCalls) unsubscribeCalls();
         if (unsubscribeOfficers) unsubscribeOfficers();
         if (unsubscribeHqCalls) unsubscribeHqCalls();
         if (unsubscribeAssignments) unsubscribeAssignments();
         resetViewer();
         activeTournamentId = tournamentId;
+        if (adminTournamentId) adminTournamentId.textContent = tournamentId;
         assignmentCache = [];
         if (tournamentChanged) {
           rulingEyeAdminData = null;
           rulingEyeCallCandidates = [];
           rulingEyeCandidatesBySessionId = new Map();
+          officersCache = [];
           if (rulingEyeCallCandidateList) {
-            rulingEyeCallCandidateList.innerHTML = '<p class="camera-empty">「管理情報を読み込む」を押してRuling Eye呼出対象を表示してください。</p>';
+            rulingEyeCallCandidateList.innerHTML = '<p class="camera-empty">「最新データ取得」を押してRuling Eye呼出対象を表示してください。</p>';
           }
+          if (adminTournamentName) adminTournamentName.textContent = '未読込';
+          if (adminLastLoaded) adminLastLoaded.textContent = '-';
         }
         renderAssignmentRoster();
         selectedOfficerData = null;
-        selectedOfficer.textContent = '競技委員を選択してください';
+        selectedOfficer.textContent = '待機中の競技委員を選択してください';
         sendRequestButton.disabled = true;
         setStatus(status, '呼出を監視中', 'connected');
         callList.innerHTML = '<p class="camera-empty">呼出を確認しています…</p>';
@@ -1776,17 +1863,31 @@
         }, (err) => { showError(error, `呼出の取得に失敗しました: ${err.message}`); setStatus(status, '監視エラー', 'error'); });
         unsubscribeOfficers = db.collection('tournaments').doc(tournamentId).collection('camera_officers').onSnapshot((snapshot) => {
           officersCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        }, (err) => showError(error, `競技委員待機一覧を取得できませんでした: ${err.message}`));
+          setAdminMonitoringStatus('自動監視中', 'active');
+          renderRulingEyeCallCandidates();
+        }, (err) => {
+          setAdminMonitoringStatus('監視エラー', 'error');
+          showError(error, `競技委員端末状態を取得できませんでした: ${err.message}`);
+        });
         unsubscribeAssignments = db.collection('tournaments').doc(tournamentId).collection('camera_assignments').onSnapshot((snapshot) => {
           assignmentCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
           renderAssignmentRoster();
           renderOfficers(assignmentCache);
         }, (err) => showError(error, `大会用割当を取得できませんでした: ${err.message}`));
-        if (!officerRefreshTimer) officerRefreshTimer = setInterval(() => renderOfficers(assignmentCache), 15000);
+        if (!officerRefreshTimer) {
+          officerRefreshTimer = setInterval(() => {
+            renderOfficers(assignmentCache);
+            renderRulingEyeCallCandidates();
+          }, 15000);
+        }
         unsubscribeHqCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').onSnapshot((snapshot) => {
           renderHqCalls(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
         }, (err) => showError(error, `本部からの映像依頼を取得できませんでした: ${err.message}`));
-      } catch (err) { showError(error, err.message); setStatus(status, 'Firebase設定エラー', 'error'); }
+      } catch (err) {
+        setAdminMonitoringStatus('監視エラー', 'error');
+        showError(error, err.message);
+        setStatus(status, 'Firebase設定エラー', 'error');
+      }
     }
     async function addOrQueueCandidate(candidate) {
       iceCandidatesReceived += 1;
@@ -1942,6 +2043,24 @@
       try { await remoteVideo.play(); } catch (playError) { console.warn('音声付き再生を開始できませんでした', playError); }
       debug('audio', '音声ON');
     });
+    window.addEventListener('pagehide', () => {
+      if (unsubscribeCalls) unsubscribeCalls();
+      if (unsubscribeOfficers) unsubscribeOfficers();
+      if (unsubscribeAssignments) unsubscribeAssignments();
+      if (unsubscribeHqCalls) unsubscribeHqCalls();
+      if (unsubscribeRoster) unsubscribeRoster();
+      if (unsubscribeOfferCandidates) unsubscribeOfferCandidates();
+      if (unsubscribeActiveSession) unsubscribeActiveSession();
+      if (officerRefreshTimer) clearInterval(officerRefreshTimer);
+      closePeer(peer);
+      setAdminMonitoringStatus('停止中', 'idle');
+    });
+
+    const urlTournamentId = new URLSearchParams(window.location.search).get('tournamentId');
+    if (urlTournamentId) {
+      tournamentInput.value = cleanTournamentId(urlTournamentId);
+      await loadRulingEyeCameraAdminData(tournamentInput.value);
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => { if (isOfficerPage) startOfficer(); else startAdmin(); });
