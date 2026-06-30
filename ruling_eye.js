@@ -56,6 +56,10 @@
     pendingExternalUpdate: false,
     operationBusy: false,
     globalMessage: null,
+    loginRedirectTimer: null,
+    loginRedirectSessionId: null,
+    loginRedirectCancelled: false,
+    loginRedirectInProgress: false,
   };
 
   if (!app) {
@@ -912,7 +916,99 @@
     app.querySelectorAll(selector).forEach((el) => el.addEventListener(event, handler));
   }
 
+  function buildAdminUrl(tournamentId) {
+    return `camera_admin.html?tournamentId=${encodeURIComponent(String(tournamentId || ""))}`;
+  }
+
+  function buildOfficerUrl(tournamentId, deviceNo) {
+    return `camera_officer.html?tournamentId=${encodeURIComponent(String(tournamentId || ""))}&deviceNo=${encodeURIComponent(String(deviceNo || ""))}`;
+  }
+
+  function getRedirectUrlForLogin(session) {
+    if (!session?.tournamentId) return "";
+    if (session.loginRole === "hq") {
+      return buildAdminUrl(session.tournamentId);
+    }
+    if (session.loginRole === "chief") {
+      return buildOfficerUrl(session.tournamentId, "1");
+    }
+    if (session.loginRole === "officer" && ["2", "3", "4", "5", "6", "7"].includes(String(session.deviceNo))) {
+      return buildOfficerUrl(session.tournamentId, session.deviceNo);
+    }
+    return "";
+  }
+
+  function clearLoginRedirectTimer() {
+    if (state.loginRedirectTimer !== null) {
+      window.clearTimeout(state.loginRedirectTimer);
+      state.loginRedirectTimer = null;
+    }
+  }
+
+  function resetLoginRedirectState() {
+    clearLoginRedirectTimer();
+    state.loginRedirectSessionId = null;
+    state.loginRedirectCancelled = false;
+    state.loginRedirectInProgress = false;
+  }
+
+  function prepareLoginRedirect(session) {
+    if (state.loginRedirectSessionId === session.sessionId) return;
+    resetLoginRedirectState();
+    state.loginRedirectSessionId = session.sessionId;
+  }
+
+  function executeLoginRedirect(session) {
+    if (state.loginRedirectInProgress) return;
+    const redirectUrl = getRedirectUrlForLogin(session);
+    if (!redirectUrl) return;
+    clearLoginRedirectTimer();
+    state.loginRedirectInProgress = true;
+    const redirectNowButton = document.getElementById("redirectNowButton");
+    const cancelRedirectButton = document.getElementById("cancelRedirectButton");
+    if (redirectNowButton) redirectNowButton.disabled = true;
+    if (cancelRedirectButton) cancelRedirectButton.disabled = true;
+    window.location.assign(redirectUrl);
+  }
+
+  function scheduleLoginRedirect(session) {
+    prepareLoginRedirect(session);
+    if (
+      state.loginRedirectCancelled ||
+      state.loginRedirectInProgress ||
+      state.loginRedirectTimer !== null ||
+      !getRedirectUrlForLogin(session)
+    ) {
+      return;
+    }
+    state.loginRedirectTimer = window.setTimeout(() => {
+      state.loginRedirectTimer = null;
+      executeLoginRedirect(session);
+    }, 3000);
+  }
+
+  function cancelLoginRedirect(session) {
+    prepareLoginRedirect(session);
+    clearLoginRedirectTimer();
+    state.loginRedirectCancelled = true;
+    const panel = document.getElementById("loginRedirectPanel");
+    const message = document.getElementById("loginRedirectMessage");
+    const cancelButton = document.getElementById("cancelRedirectButton");
+    if (panel) panel.classList.add("is-cancelled");
+    if (message) message.textContent = "自動移動を停止しました。「今すぐ移動」からいつでも移動できます。";
+    if (cancelButton) {
+      cancelButton.disabled = true;
+      cancelButton.textContent = "この画面に残っています";
+    }
+  }
+
   function navigate(route, params = {}, push = true) {
+    const changingLoginComplete =
+      state.route === "loginComplete" &&
+      (route !== "loginComplete" || state.params?.sessionId !== params?.sessionId);
+    if (changingLoginComplete) {
+      resetLoginRedirectState();
+    }
     if (push && state.route) {
       state.stack.push({ route: state.route, params: state.params });
     }
@@ -928,6 +1024,9 @@
   function goBack(fallback = "home") {
     const previous = state.stack.pop();
     if (previous) {
+      if (state.route === "loginComplete") {
+        resetLoginRedirectState();
+      }
       if (isLoginRoute(state.route) && !isLoginRoute(previous.route)) {
         unsubscribeAutoRefresh();
       }
@@ -2660,8 +2759,16 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    prepareLoginRedirect(session);
     const tournament = getTournamentById(session.tournamentId, { includeDeleted: true });
     const autoRefreshPanel = autoRefreshPanelHtml(session.tournamentId);
+    const redirectUrl = getRedirectUrlForLogin(session);
+    const redirectTarget = session.loginRole === "hq" ? "本部モニター" : "競技委員端末画面";
+    const redirectMessage = state.loginRedirectCancelled
+      ? "自動移動を停止しました。「今すぐ移動」からいつでも移動できます。"
+      : redirectUrl
+        ? `ログインが完了しました。3秒後に${redirectTarget}へ移動します。`
+        : "ログインは完了しましたが、移動先を決定できませんでした。ログイン情報を確認してください。";
     const destination =
       session.loginRole === "hq"
         ? "大会本部としてログイン"
@@ -2696,7 +2803,14 @@
             <dd>${escapeHtml(formatDateTime(session.loginAt))}</dd>
           </dl>
         </div>
-        <div class="note-box">この画面は大会ログイン状態をFirestoreへ保存します。カメラ画面では同じ大会IDを入力して大会名と担当情報を読み取れます。</div>
+        <div id="loginRedirectPanel" class="login-redirect-panel${state.loginRedirectCancelled ? " is-cancelled" : ""}">
+          <p id="loginRedirectMessage" class="login-redirect-message">${escapeHtml(redirectMessage)}</p>
+          <div class="login-redirect-actions">
+            <button id="redirectNowButton" class="primary-button" type="button"${redirectUrl ? "" : " disabled"}>今すぐ移動</button>
+            <button id="cancelRedirectButton" class="secondary-button" type="button"${state.loginRedirectCancelled || !redirectUrl ? " disabled" : ""}>${state.loginRedirectCancelled ? "この画面に残っています" : "この画面に残る"}</button>
+          </div>
+        </div>
+        <div class="note-box">ログイン状態はFirestoreへ保存済みです。移動先ではURLの大会IDと端末No.から管理情報を読み取ります。</div>
         <div class="form-actions" style="justify-content:center; margin-top:20px;">
           <button id="toLogin" class="secondary-button" type="button">大会ログインへ</button>
           <button id="toHome" class="primary-button" type="button">メインメニューへ戻る</button>
@@ -2705,11 +2819,17 @@
     `;
     bindAutoRefreshToggle(session.tournamentId);
     syncAutoRefreshForLoginTournament(session.tournamentId);
+    on("redirectNowButton", "click", () => executeLoginRedirect(session));
+    on("cancelRedirectButton", "click", () => cancelLoginRedirect(session));
     on("toLogin", "click", () => navigate("loginStep1"));
     on("toHome", "click", () => navigate("home", {}, false));
+    scheduleLoginRedirect(session);
   }
 
-  window.addEventListener("pagehide", unsubscribeAutoRefresh);
+  window.addEventListener("pagehide", () => {
+    unsubscribeAutoRefresh();
+    clearLoginRedirectTimer();
+  });
 
   bootstrap();
 })();

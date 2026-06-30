@@ -803,6 +803,39 @@ button:disabled,
   font-weight: 900;
 }
 
+.login-redirect-panel {
+  max-width: 720px;
+  margin: 24px auto 0;
+  border: 1px solid #a8c9ef;
+  border-radius: var(--radius-md);
+  padding: clamp(18px, 3vw, 24px);
+  background: #eef6ff;
+}
+
+.login-redirect-panel.is-cancelled {
+  border-color: var(--line);
+  background: #f6f8fa;
+}
+
+.completion-card .login-redirect-message {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+  font-weight: 900;
+}
+
+.login-redirect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.login-redirect-actions > button {
+  min-width: 180px;
+}
+
 .empty-state {
   border: 1px dashed var(--line);
   border-radius: var(--radius-md);
@@ -1074,6 +1107,7 @@ button:disabled,
 
   .next-actions > button,
   .form-actions > button,
+  .login-redirect-actions > button,
   .top-actions > button {
     width: 100%;
   }

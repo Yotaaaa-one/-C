@@ -194,6 +194,17 @@
       }
     })();
     if (!['1', '2', '3', '4', '5', '6', '7'].includes(String(deviceNo))) deviceNo = '1';
+    const launchParams = new URLSearchParams(window.location.search);
+    const launchTournamentId = cleanTournamentId(launchParams.get('tournamentId') || '');
+    const launchDeviceNo = String(launchParams.get('deviceNo') || '');
+    if (launchTournamentId) tournamentInput.value = launchTournamentId;
+    if (['1', '2', '3', '4', '5', '6', '7'].includes(launchDeviceNo)) {
+      deviceNo = launchDeviceNo;
+      try {
+        localStorage.setItem('rulingEyeCameraDeviceNo', deviceNo);
+        localStorage.setItem('ruling-eye-device-no', deviceNo);
+      } catch (_) { /* private mode fallback */ }
+    }
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
 
