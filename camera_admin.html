@@ -40,9 +40,14 @@
             <h3>ログイン状態一覧</h3>
             <div id="rulingEyeLoginList" class="ruling-eye-list"><p class="camera-empty">未読込です。</p></div>
           </div>
-          <div class="ruling-eye-subsection">
-            <h3>将来の呼出候補</h3>
-            <div id="rulingEyeCallCandidateList" class="ruling-eye-list"><p class="camera-empty">RE-3.0では表示のみです。</p></div>
+          <div class="ruling-eye-subsection ruling-eye-call-targets">
+            <div>
+              <h3>Ruling Eye呼出対象</h3>
+              <p class="ruling-eye-call-target-note">ruling_eye.html でactiveログイン中の競技委員長・競技委員だけを表示します。</p>
+            </div>
+            <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
+              <p class="camera-empty">管理情報を読み込むと、iPhone No.1〜No.7のログイン状態を表示します。</p>
+            </div>
           </div>
         </section>
         <section class="camera-panel roster-panel" aria-label="競技委員ロースター管理">
@@ -68,9 +73,9 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
           <div id="assignmentRosterList" class="camera-call-list"><p class="camera-empty">ロースターを読み込んでいます。</p></div>
           <button id="saveAssignmentsButton" class="camera-button camera-button-primary" type="button" disabled>大会用割当を保存</button>
         </section>
-        <section class="camera-call-list-section" aria-label="競技委員待機一覧">
+        <section class="camera-call-list-section" aria-label="既存待機・割当一覧">
           <div class="camera-section-heading">
-            <h2>競技委員待機一覧</h2>
+            <h2>既存待機・割当一覧</h2>
             <span id="officerCount" class="camera-count">0</span>
           </div>
           <div id="officerList" class="camera-call-list">
@@ -89,13 +94,13 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
           </label>
           <button id="sendRequestButton" class="camera-button camera-button-primary" type="button" disabled>映像依頼</button>
         </section>
-        <section class="camera-call-list-section" aria-label="本部からの映像依頼一覧">
-          <div class="camera-section-heading"><h2>本部からの映像依頼</h2></div>
+        <section class="camera-call-list-section" aria-label="映像依頼の状態一覧">
+          <div class="camera-section-heading"><h2>映像依頼の状態一覧</h2></div>
           <div id="hqCallList" class="camera-call-list"><p class="camera-empty">映像依頼はありません。</p></div>
         </section>
-        <section class="camera-call-list-section" aria-label="呼出中の競技委員">
+        <section class="camera-call-list-section" aria-label="既存映像セッション">
           <div class="camera-section-heading">
-            <h2>映像セッション</h2>
+            <h2>既存映像セッション</h2>
             <span id="callCount" class="camera-count">0</span>
           </div>
           <div id="callList" class="camera-call-list">

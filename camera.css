@@ -102,6 +102,20 @@ button { cursor: pointer; }
 .ruling-eye-row strong { color: var(--camera-navy); font-size: .86rem; }
 .ruling-eye-row span, .ruling-eye-row small { color: var(--camera-muted); font-size: .78rem; font-weight: 700; }
 .ruling-eye-row em { justify-self: end; border-radius: 99px; padding: 3px 7px; color: var(--camera-blue-dark); background: #e4f1fa; font-size: .72rem; font-style: normal; font-weight: 900; }
+.ruling-eye-call-targets { border-top: 2px solid #c9dfed; padding-top: 12px; }
+.ruling-eye-call-target-note { margin: 4px 0 0; color: var(--camera-muted); font-size: .76rem; font-weight: 700; line-height: 1.45; }
+.ruling-eye-call-target-list { display: grid; gap: 8px; }
+.ruling-eye-call-target-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; align-items: center; border: 1px solid var(--camera-line); border-radius: 10px; padding: 11px; background: #fff; }
+.ruling-eye-call-target-card.is-online { border-color: #78bfae; background: #f1fbf8; }
+.ruling-eye-call-target-card.is-offline { color: var(--camera-muted); background: #f5f7f8; }
+.ruling-eye-call-target-card.is-selected { border-color: var(--camera-blue); box-shadow: 0 0 0 3px rgb(23 105 170 / 16%); }
+.ruling-eye-call-target-main { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.ruling-eye-call-target-main strong { color: var(--camera-navy); font-size: .94rem; }
+.ruling-eye-call-target-main span { color: var(--camera-blue-dark); font-size: .76rem; font-weight: 900; }
+.ruling-eye-call-target-card p { grid-column: 1; margin: 0; color: var(--camera-navy); font-size: .84rem; font-weight: 800; }
+.ruling-eye-call-target-card em { grid-column: 2; grid-row: 1 / span 2; justify-self: end; border-radius: 99px; padding: 4px 8px; color: var(--camera-green); background: #def4ed; font-size: .7rem; font-style: normal; font-weight: 900; }
+.ruling-eye-call-target-card.is-offline em { color: #64717c; background: #e5e9ec; }
+.ruling-eye-call-target-card .camera-button { grid-column: 1 / -1; min-height: 42px; }
 .camera-csv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.camera-csv-actions .camera-button { min-height: 40px; padding: 8px; font-size: .8rem; }.camera-csv-result { margin: 0; border-radius: 7px; padding: 8px 10px; color: var(--camera-muted); background: #f1f5f7; font-size: .78rem; line-height: 1.45; white-space: pre-wrap; }.camera-csv-result[data-tone="success"] { color: var(--camera-green); background: #effaf7; }.camera-csv-result[data-tone="error"] { color: var(--camera-red); background: #fff3f3; }.camera-csv-sample { color: var(--camera-muted); font-size: .78rem; }.camera-csv-sample summary { cursor: pointer; color: var(--camera-blue-dark); font-weight: 800; }.camera-csv-sample pre { overflow-x: auto; margin: 7px 0 0; border-radius: 6px; padding: 8px; color: #30485a; background: #f5f8fa; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .7rem; line-height: 1.45; }
 .camera-call-card { display: grid; gap: 10px; border: 2px solid #e5a031; border-radius: 11px; padding: 14px; background: #fff9ed; box-shadow: 0 3px 10px rgb(116 77 12 / 10%); }.camera-call-card[data-status="connected"] { border-color: #77b9aa; background: #f2fbf8; }
 .camera-card-top, .camera-card-meta { display: flex; justify-content: space-between; gap: 12px; }.camera-card-name { color: var(--camera-navy); font-weight: 800; }.camera-card-status { color: #986000; font-size: .78rem; font-weight: 800; }.camera-call-card[data-status="connected"] .camera-card-status { color: var(--camera-green); }
