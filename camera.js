@@ -244,7 +244,7 @@
       if (login) {
         currentRulingEyeDevice = {
           tournamentId: data.tournamentId,
-          tournamentName: setting.tournamentName || login.tournamentName || '',
+          tournamentName: setting.tournamentName || login.tournamentName || data.tournamentId,
           deviceNo: String(deviceNo),
           loginRole: login.loginRole || '',
           officerId: login.officerId || '',
@@ -264,7 +264,7 @@
       const loginState = login ? 'ログイン済み' : '未ログイン';
       rulingEyeDeviceSummary.innerHTML = `
         <div class="ruling-eye-info-card"><span>大会ID</span><strong>${escapeHtml(data.tournamentId)}</strong></div>
-        <div class="ruling-eye-info-card"><span>大会名</span><strong>${escapeHtml(setting.tournamentName || '-')}</strong></div>
+        <div class="ruling-eye-info-card"><span>大会名</span><strong>${escapeHtml(setting.tournamentName || data.tournamentId)}</strong></div>
         <div class="ruling-eye-info-card"><span>年度</span><strong>${escapeHtml(setting.year || '-')}</strong></div>
         <div class="ruling-eye-info-card"><span>この端末</span><strong>iPhone No.${escapeHtml(deviceNo)}</strong></div>
         <div class="ruling-eye-info-card"><span>担当者</span><strong>${escapeHtml(officerName)}</strong></div>
@@ -877,8 +877,9 @@
         return;
       }
       rulingEyeAdminSummary.innerHTML = `
+        <div class="ruling-eye-info-card"><span>大会ID</span><strong>${escapeHtml(data.tournamentId)}</strong></div>
         <div class="ruling-eye-info-card"><span>年度</span><strong>${escapeHtml(setting.year || '-')}</strong></div>
-        <div class="ruling-eye-info-card"><span>大会名</span><strong>${escapeHtml(setting.tournamentName || '-')}</strong></div>
+        <div class="ruling-eye-info-card"><span>大会名</span><strong>${escapeHtml(setting.tournamentName || data.tournamentId)}</strong></div>
         <div class="ruling-eye-info-card"><span>競技委員人数</span><strong>${escapeHtml(setting.officerCount || '-')}</strong></div>
         <div class="ruling-eye-info-card"><span>競技委員長</span><strong>${escapeHtml(setting.chiefOfficerName || '-')}</strong></div>
         <div class="ruling-eye-info-card"><span>管理データ読込状態</span><strong>読込済み</strong></div>

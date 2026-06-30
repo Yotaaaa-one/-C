@@ -706,6 +706,70 @@ button:disabled,
   font-weight: 900;
 }
 
+.tournament-id-preview {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(15, 95, 143, 0.3);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--primary-soft);
+}
+
+.tournament-id-preview.is-fixed {
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
+.tournament-id-preview .field-label {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.tournament-id-preview strong {
+  color: var(--primary-dark);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+}
+
+.tournament-list-block {
+  margin-top: 28px;
+}
+
+.tournament-list-block h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.1rem;
+}
+
+.tournament-list-table code {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--primary-dark);
+  font-weight: 900;
+}
+
+.tournament-selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--panel-soft);
+}
+
+.tournament-selection-summary span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.tournament-selection-summary strong {
+  margin-left: 6px;
+  color: var(--ink);
+}
+
 .selected-counter {
   display: flex;
   flex-wrap: wrap;

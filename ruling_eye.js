@@ -147,6 +147,91 @@
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  function parseTournamentId(tournamentId) {
+    const match = String(tournamentId || "").trim().match(/^(\d{4})_(\d+)$/);
+    if (!match) return null;
+    const sequenceNo = Number(match[2]);
+    if (!Number.isInteger(sequenceNo) || sequenceNo < 1) return null;
+    return {
+      year: match[1],
+      sequenceNo,
+    };
+  }
+
+  function formatTournamentId(year, sequenceNo) {
+    const normalizedYear = String(year || "").trim();
+    const normalizedSequence = Number(sequenceNo);
+    if (!/^\d{4}$/.test(normalizedYear)) {
+      throw new Error("大会年度は4桁で指定してください。");
+    }
+    if (!Number.isInteger(normalizedSequence) || normalizedSequence < 1) {
+      throw new Error("大会連番を発行できませんでした。");
+    }
+    return `${normalizedYear}_${String(normalizedSequence).padStart(2, "0")}`;
+  }
+
+  function nextTournamentSequenceFromRecords(year, records) {
+    const targetYear = String(year || "").trim();
+    let maximum = 0;
+    (records || []).forEach((record) => {
+      const recordYear = String(record?.year || "").trim();
+      const storedSequence = Number(record?.sequenceNo);
+      if (recordYear === targetYear && Number.isInteger(storedSequence) && storedSequence > 0) {
+        maximum = Math.max(maximum, storedSequence);
+      }
+      const parsedId = parseTournamentId(record?.tournamentId);
+      if (parsedId?.year === targetYear) {
+        maximum = Math.max(maximum, parsedId.sequenceNo);
+      }
+    });
+    return maximum + 1;
+  }
+
+  function tournamentIdFromSettingsDoc(doc) {
+    return doc?.ref?.parent?.parent?.id || doc?.data?.()?.tournamentId || "";
+  }
+
+  async function getNextTournamentSequence(year) {
+    const snapshot = await db.collectionGroup("ruling_eye_settings").get();
+    const records = snapshot.docs
+      .filter((doc) => doc.id === "main")
+      .map((doc) => ({
+        ...doc.data(),
+        tournamentId: tournamentIdFromSettingsDoc(doc),
+      }));
+    return nextTournamentSequenceFromRecords(year, records);
+  }
+
+  async function generateTournamentId(year) {
+    let sequenceNo = await getNextTournamentSequence(year);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const tournamentId = formatTournamentId(year, sequenceNo);
+      const existing = await tournamentSettingsRef(tournamentId).get();
+      if (!existing.exists) {
+        return { tournamentId, sequenceNo };
+      }
+      sequenceNo += 1;
+    }
+    throw new Error("大会IDの自動発行に失敗しました。もう一度お試しください。");
+  }
+
+  function tournamentDisplayName(tournament) {
+    return String(tournament?.tournamentName || tournament?.tournamentId || "名称未登録");
+  }
+
+  function tournamentSequenceLabel(tournament) {
+    const sequenceNo = Number(tournament?.sequenceNo);
+    return Number.isInteger(sequenceNo) && sequenceNo > 0
+      ? String(sequenceNo).padStart(2, "0")
+      : "旧形式";
+  }
+
+  function tournamentOptionLabel(tournament) {
+    const name = tournamentDisplayName(tournament);
+    const legacySuffix = tournament.isLegacyId ? "（旧形式ID）" : "";
+    return `${tournament.year || "-"} / ${tournamentSequenceLabel(tournament)} / ${tournament.tournamentId} / ${name}${legacySuffix}`;
+  }
+
   function formatDateTime(value) {
     if (!value) return "-";
     const date = new Date(value);
@@ -205,7 +290,7 @@
       if (yearDiff) return yearDiff;
       const createdDiff = String(a.createdAt || "").localeCompare(String(b.createdAt || ""), "ja", { numeric: true });
       if (createdDiff) return createdDiff;
-      return String(a.tournamentName || "").localeCompare(String(b.tournamentName || ""), "ja", { numeric: true, sensitivity: "base" });
+      return tournamentDisplayName(a).localeCompare(tournamentDisplayName(b), "ja", { numeric: true, sensitivity: "base" });
     });
   }
 
@@ -293,7 +378,7 @@
   }
 
   function upsertTournamentFromSnapshot(tournamentId, data) {
-    const normalized = normalizeTournament({ tournamentId, ...data });
+    const normalized = normalizeTournament({ ...data, tournamentId });
     const index = dataCache.tournaments.findIndex((tournament) => tournament.tournamentId === normalized.tournamentId);
     if (index >= 0) {
       dataCache.tournaments[index] = normalized;
@@ -537,11 +622,21 @@
     };
   }
 
-  function normalizeTournament(tournament) {
+  function normalizeTournamentRecord(tournament = {}) {
+    const tournamentId = String(tournament.tournamentId || makeId("tournament")).trim();
+    const parsedId = parseTournamentId(tournamentId);
+    const year = String(tournament.year || parsedId?.year || new Date().getFullYear());
+    const storedSequence = Number(tournament.sequenceNo);
+    const sequenceNo = Number.isInteger(storedSequence) && storedSequence > 0
+      ? storedSequence
+      : parsedId?.sequenceNo || null;
+    const standardId = parsedId && parsedId.year === year && tournamentId === formatTournamentId(parsedId.year, parsedId.sequenceNo);
     return {
-      tournamentId: tournament.tournamentId || makeId("tournament"),
-      year: String(tournament.year || new Date().getFullYear()),
-      tournamentName: tournament.tournamentName || "",
+      tournamentId,
+      year,
+      sequenceNo,
+      tournamentName: tournament.tournamentName || tournament.name || tournamentId,
+      isLegacyId: !standardId,
       officerCount: Number(tournament.officerCount || 5),
       chiefOfficerId: tournament.chiefOfficerId || "",
       chiefOfficerName: tournament.chiefOfficerName || "",
@@ -562,6 +657,10 @@
       createdAt: normalizeDateValue(tournament.createdAt) || nowIso(),
       updatedAt: normalizeDateValue(tournament.updatedAt) || nowIso(),
     };
+  }
+
+  function normalizeTournament(tournament) {
+    return normalizeTournamentRecord(tournament);
   }
 
   function normalizeLoginSession(session) {
@@ -606,6 +705,7 @@
     return {
       tournamentId: normalized.tournamentId,
       year: normalized.year,
+      sequenceNo: normalized.sequenceNo,
       tournamentName: normalized.tournamentName,
       officerCount: normalized.officerCount,
       chiefOfficerId: normalized.chiefOfficerId,
@@ -917,7 +1017,10 @@
     dataCache.officers = rosterSnapshot.docs.map((doc) => normalizeOfficer({ officerId: doc.id, ...doc.data() }));
     dataCache.tournaments = settingsSnapshot.docs
       .filter((doc) => doc.id === "main")
-      .map((doc) => normalizeTournament({ ...doc.data() }));
+      .map((doc) => normalizeTournament({
+        ...doc.data(),
+        tournamentId: tournamentIdFromSettingsDoc(doc),
+      }));
     dataCache.loginSessions = sessionsSnapshot.docs.map((doc) => normalizeLoginSession({ sessionId: doc.id, ...doc.data() }));
     state.lastLoadedAt = nowIso();
   }
@@ -1021,7 +1124,7 @@
       <section class="screen">
         <div class="hero-card">
           <h2>Ruling Eye</h2>
-          <p>競技委員 映像裁定支援システム｜Firestore管理導線 Phase RE-2.2</p>
+          <p>競技委員 映像裁定支援システム｜Firestore管理導線 Phase RE-2.3</p>
         </div>
         ${statusDashboardHtml()}
         <div class="menu-grid">
@@ -1604,6 +1707,7 @@
       return {
         tournamentId: null,
         year: currentYear,
+        sequenceNo: null,
         tournamentName: "",
         officerCount: 5,
         chiefOfficerId: "",
@@ -1616,7 +1720,9 @@
     return {
       tournamentId: tournament.tournamentId,
       year: tournament.year || currentYear,
-      tournamentName: tournament.tournamentName || "",
+      sequenceNo: tournament.sequenceNo || null,
+      tournamentName: tournamentDisplayName(tournament),
+      isLegacyId: tournament.isLegacyId === true,
       officerCount: Number(tournament.officerCount || 5),
       chiefOfficerId: tournament.chiefOfficerId || "",
       chiefOfficerName: tournament.chiefOfficerName || "",
@@ -1629,6 +1735,13 @@
   function renderTournamentStep1(mode = "new") {
     const draft = state.tournamentDraft || createTournamentDraft();
     state.tournamentDraft = draft;
+    const isEdit = mode === "edit" && Boolean(draft.tournamentId);
+    const plannedSequence = isEdit
+      ? draft.sequenceNo
+      : nextTournamentSequenceFromRecords(draft.year, readTournaments({ includeDeleted: true }));
+    const plannedTournamentId = isEdit
+      ? draft.tournamentId
+      : formatTournamentId(draft.year, plannedSequence);
     const specialists = getActiveOfficers().filter((officer) => officer.categories.includes("specialist"));
     const chiefOptions = [
       ...specialists.map((officer) => ({ value: officer.officerId, label: `${officer.officerName}（${categoriesLabel(officer.categories)}）` })),
@@ -1660,6 +1773,15 @@
             <label for="tournamentName">大会名 <span class="badge red">必須</span></label>
             <input id="tournamentName" type="text" value="${escapeHtml(draft.tournamentName)}" placeholder="例: 日本プロゴルフ選手権">
           </div>
+          <div class="field full tournament-id-preview${isEdit ? " is-fixed" : ""}">
+            <span class="field-label">大会ID</span>
+            <strong id="plannedTournamentId">${escapeHtml(plannedTournamentId)}</strong>
+            <span id="plannedTournamentIdHint" class="hint">${
+              isEdit
+                ? `大会IDは変更できません。大会名を変更しても ${escapeHtml(draft.tournamentId)} のままです。`
+                : "大会IDは保存時に年度＋年度内連番で自動発行されます。表示中のIDは予定値です。"
+            }</span>
+          </div>
           <div class="field full">
             <label for="chiefOfficerId">競技委員長 設定</label>
             <select id="chiefOfficerId">${optionsHtml(chiefOptions, chiefValue, "競技委員長を選択")}</select>
@@ -1679,6 +1801,13 @@
     bindBack(mode === "edit" ? "tournamentEditReview" : "tournamentMenu");
     on("chiefOfficerId", "change", () => {
       document.getElementById("chiefOtherField")?.classList.toggle("hidden", getSelectValue("chiefOfficerId") !== "other");
+    });
+    on("tournamentYear", "change", () => {
+      if (isEdit) return;
+      const selectedYear = getSelectValue("tournamentYear");
+      const sequenceNo = nextTournamentSequenceFromRecords(selectedYear, readTournaments({ includeDeleted: true }));
+      const plannedId = document.getElementById("plannedTournamentId");
+      if (plannedId) plannedId.textContent = formatTournamentId(selectedYear, sequenceNo);
     });
     on("nextTournamentStep1", "click", () => saveTournamentStep1(mode));
   }
@@ -1892,11 +2021,29 @@
   function tournamentSummaryHtml(draft, selectedOfficers, clickable = false) {
     const clickClass = clickable ? " clickable" : "";
     const attr = (target) => (clickable ? ` data-edit-target="${target}"` : "");
+    const isExisting = Boolean(draft.tournamentId);
+    const plannedSequence = isExisting
+      ? draft.sequenceNo
+      : nextTournamentSequenceFromRecords(draft.year, readTournaments({ includeDeleted: true }));
+    const displayTournamentId = isExisting
+      ? draft.tournamentId
+      : formatTournamentId(draft.year, plannedSequence);
+    const sequenceLabel = isExisting
+      ? tournamentSequenceLabel(draft)
+      : String(plannedSequence).padStart(2, "0");
     return `
       <div class="summary-grid">
+        <dl class="summary-item">
+          <dt>大会ID（変更不可）</dt>
+          <dd>${escapeHtml(displayTournamentId)}${isExisting && draft.isLegacyId ? ' <span class="badge gray">旧形式ID</span>' : ""}</dd>
+        </dl>
         <dl class="summary-item${clickClass}"${attr("step1")}>
           <dt>年度</dt>
           <dd>${escapeHtml(draft.year)}</dd>
+        </dl>
+        <dl class="summary-item">
+          <dt>年度内連番</dt>
+          <dd>${escapeHtml(sequenceLabel)}</dd>
         </dl>
         <dl class="summary-item${clickClass}"${attr("step1")}>
           <dt>大会名</dt>
@@ -1931,28 +2078,31 @@
       setStatus(`指定人数と選択済み人数が一致していません。現在 ${total}名 / 必要 ${draft.officerCount}名です。`, "error");
       return;
     }
-    const tournaments = readTournaments({ includeDeleted: true });
-    const existingIndex = draft.tournamentId
-      ? tournaments.findIndex((tournament) => tournament.tournamentId === draft.tournamentId)
-      : -1;
-    const now = nowIso();
-    const selectedOfficers = selectedOfficersFromDraft(draft);
-    const payload = normalizeTournament({
-      tournamentId: draft.tournamentId || makeId("tournament"),
-      year: draft.year,
-      tournamentName: draft.tournamentName,
-      officerCount: Number(draft.officerCount),
-      chiefOfficerId: draft.chiefOfficerId === "other" ? "other" : draft.chiefOfficerId,
-      chiefOfficerName: draft.chiefOfficerName,
-      selectedOfficerIds: selectedOfficers.map((officer) => officer.officerId),
-      selectedOfficers,
-      active: true,
-      deleted: false,
-      createdAt: existingIndex >= 0 ? tournaments[existingIndex].createdAt : now,
-      updatedAt: now,
-    });
-
     await runOperation({ workingMessage: "大会設定を保存中です…", actionName: "大会設定の保存" }, async () => {
+      const tournaments = readTournaments({ includeDeleted: true });
+      const existingIndex = draft.tournamentId
+        ? tournaments.findIndex((tournament) => tournament.tournamentId === draft.tournamentId)
+        : -1;
+      const now = nowIso();
+      const selectedOfficers = selectedOfficersFromDraft(draft);
+      const generated = draft.tournamentId
+        ? { tournamentId: draft.tournamentId, sequenceNo: draft.sequenceNo }
+        : await generateTournamentId(draft.year);
+      const payload = normalizeTournament({
+        tournamentId: generated.tournamentId,
+        year: draft.year,
+        sequenceNo: generated.sequenceNo,
+        tournamentName: draft.tournamentName,
+        officerCount: Number(draft.officerCount),
+        chiefOfficerId: draft.chiefOfficerId === "other" ? "other" : draft.chiefOfficerId,
+        chiefOfficerName: draft.chiefOfficerName,
+        selectedOfficerIds: selectedOfficers.map((officer) => officer.officerId),
+        selectedOfficers,
+        active: true,
+        deleted: false,
+        createdAt: existingIndex >= 0 ? tournaments[existingIndex].createdAt : now,
+        updatedAt: now,
+      });
       await saveTournamentDocAndAssignments(payload);
       state.tournamentDraft = createTournamentDraft(payload);
       state.globalMessage = { type: "success", message: "大会設定を保存しました。" };
@@ -1966,7 +2116,17 @@
       <section class="completion-card">
         <div class="completion-icon">✓</div>
         <h2>設定完了</h2>
-        <p>${escapeHtml(tournament?.tournamentName || "")} を保存しました。</p>
+        <p>${escapeHtml(tournamentDisplayName(tournament))} を保存しました。</p>
+        <div class="summary-grid">
+          <dl class="summary-item">
+            <dt>大会ID</dt>
+            <dd>${escapeHtml(tournament?.tournamentId || "-")}</dd>
+          </dl>
+          <dl class="summary-item">
+            <dt>大会名</dt>
+            <dd>${escapeHtml(tournamentDisplayName(tournament))}</dd>
+          </dl>
+        </div>
         <div class="form-actions" style="justify-content:center; margin-top:20px;">
           <button id="toTournamentMenu" class="secondary-button" type="button">大会設定へ</button>
           <button id="toHome" class="primary-button" type="button">メインメニューへ戻る</button>
@@ -1995,9 +2155,9 @@
                   <select id="editYear">${optionsHtml(years, selectedYear, "年度を選択")}</select>
                 </div>
                 <div class="field">
-                  <label for="editTournamentId">大会名</label>
+                  <label for="editTournamentId">大会名 / 大会ID</label>
                   <select id="editTournamentId">${optionsHtml(
-                    tournamentsInYear.map((tournament) => ({ value: tournament.tournamentId, label: tournament.tournamentName })),
+                    tournamentsInYear.map((tournament) => ({ value: tournament.tournamentId, label: tournamentOptionLabel(tournament) })),
                     "",
                     "大会を選択",
                   )}</select>
@@ -2008,6 +2168,7 @@
                 <button id="deleteTournament" class="danger-button" type="button">大会削除</button>
                 <button id="loadTournamentEdit" class="primary-button" type="button">修正 ⇒</button>
               </div>
+              ${tournamentTableHtml(tournaments)}
             `
             : `<div class="empty-state">大会設定が未登録です。大会設定から新規登録してください。</div>`
         }
@@ -2027,6 +2188,41 @@
       navigate("tournamentEditReview");
     });
     on("deleteTournament", "click", () => softDeleteTournamentFromSelect());
+  }
+
+  function tournamentTableHtml(tournaments) {
+    return `
+      <div class="tournament-list-block">
+        <h3>大会設定一覧</h3>
+        <table class="list-table tournament-list-table">
+          <thead>
+            <tr>
+              <th>年度</th>
+              <th>連番</th>
+              <th>大会ID</th>
+              <th>大会名</th>
+              <th>競技委員長</th>
+              <th>削除状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tournaments.map((tournament) => `
+              <tr>
+                <td data-label="年度">${escapeHtml(tournament.year || "-")}</td>
+                <td data-label="連番">${escapeHtml(tournamentSequenceLabel(tournament))}</td>
+                <td data-label="大会ID">
+                  <code>${escapeHtml(tournament.tournamentId)}</code>
+                  ${tournament.isLegacyId ? '<span class="badge gray">旧形式ID</span>' : ""}
+                </td>
+                <td data-label="大会名">${escapeHtml(tournamentDisplayName(tournament))}</td>
+                <td data-label="競技委員長">${escapeHtml(tournament.chiefOfficerName || "-")}</td>
+                <td data-label="削除状態"><span class="badge green">有効</span></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   async function softDeleteTournamentFromSelect() {
@@ -2086,7 +2282,7 @@
     const autoRefreshPanel = selectedTournament ? autoRefreshPanelHtml(selectedTournament.tournamentId) : "";
     app.innerHTML = `
       <section class="screen-card">
-        ${screenHeader("大会ログイン", "年度と大会名を選択してログインに進みます。ログイン状態の個別解除 / 全解除もできます。")}
+        ${screenHeader("大会ログイン", "年度・大会ID・大会名を確認してログインに進みます。ログイン状態の個別解除 / 全解除もできます。")}
         ${statusDashboardHtml()}
         ${
           tournaments.length
@@ -2097,14 +2293,20 @@
                   <select id="loginYear">${optionsHtml(years, selectedYear, "年度を選択")}</select>
                 </div>
                 <div class="field">
-                  <label for="loginTournamentId">大会名</label>
+                  <label for="loginTournamentId">大会名 / 大会ID</label>
                   <select id="loginTournamentId">${optionsHtml(
-                    tournamentsInYear.map((tournament) => ({ value: tournament.tournamentId, label: tournament.tournamentName })),
+                    tournamentsInYear.map((tournament) => ({ value: tournament.tournamentId, label: tournamentOptionLabel(tournament) })),
                     selectedTournamentId,
                     "大会を選択",
                   )}</select>
                 </div>
               </div>
+              ${selectedTournament ? `
+                <div class="tournament-selection-summary">
+                  <span>大会ID <strong>${escapeHtml(selectedTournament.tournamentId)}</strong></span>
+                  <span>大会名 <strong>${escapeHtml(tournamentDisplayName(selectedTournament))}</strong></span>
+                </div>
+              ` : ""}
               <p id="statusMessage" class="status-message"></p>
               <div class="next-actions">
                 <button id="loginTournament" class="primary-button" type="button">ログイン</button>
@@ -2130,7 +2332,7 @@
     on("loginTournament", "click", () => {
       const selectedId = getSelectValue("loginTournamentId");
       if (!selectedId) {
-        setStatus("大会名を選択してください。", "error");
+        setStatus("大会を選択してください。", "error");
         return;
       }
       state.loginDraft = { tournamentId: selectedId };
@@ -2250,7 +2452,7 @@
     const autoRefreshPanel = autoRefreshPanelHtml(tournament.tournamentId);
     app.innerHTML = `
       <section class="screen-card">
-        ${screenHeader("大会ログイン｜ログイン者選択", tournament.tournamentName)}
+        ${screenHeader("大会ログイン｜ログイン者選択", `${tournamentDisplayName(tournament)}｜${tournament.tournamentId}`)}
         ${autoRefreshPanel}
         <div class="choice-list">
           <button id="loginHeadquarters" class="choice-button" type="button">
@@ -2314,7 +2516,7 @@
       .filter((officer) => !(tournament.chiefOfficerId && tournament.chiefOfficerId !== "other" && officer.officerId === tournament.chiefOfficerId));
     app.innerHTML = `
       <section class="screen-card">
-        ${screenHeader("大会ログイン｜競技委員選択", `${tournament.tournamentName}｜委員長は通常競技委員の選択肢から除外しています。`)}
+        ${screenHeader("大会ログイン｜競技委員選択", `${tournamentDisplayName(tournament)}｜${tournament.tournamentId}｜委員長は通常競技委員の選択肢から除外しています。`)}
         ${autoRefreshPanel}
         ${assignmentSummaryPanelHtml(tournament)}
         ${
@@ -2433,7 +2635,7 @@
     const session = normalizeLoginSession({
       sessionId: makeId("login"),
       tournamentId: tournament.tournamentId,
-      tournamentName: tournament.tournamentName,
+      tournamentName: tournamentDisplayName(tournament),
       loginRole,
       roleLabel,
       officerId,
@@ -2458,6 +2660,7 @@
       navigate("loginStep1", {}, false);
       return;
     }
+    const tournament = getTournamentById(session.tournamentId, { includeDeleted: true });
     const autoRefreshPanel = autoRefreshPanelHtml(session.tournamentId);
     const destination =
       session.loginRole === "hq"
@@ -2473,8 +2676,12 @@
         ${autoRefreshPanel}
         <div class="summary-grid">
           <dl class="summary-item">
+            <dt>大会ID</dt>
+            <dd>${escapeHtml(session.tournamentId)}</dd>
+          </dl>
+          <dl class="summary-item">
             <dt>大会名</dt>
-            <dd>${escapeHtml(session.tournamentName)}</dd>
+            <dd>${escapeHtml(tournament ? tournamentDisplayName(tournament) : session.tournamentName || session.tournamentId)}</dd>
           </dl>
           <dl class="summary-item">
             <dt>ログイン者</dt>
@@ -2489,7 +2696,7 @@
             <dd>${escapeHtml(formatDateTime(session.loginAt))}</dd>
           </dl>
         </div>
-        <div class="note-box">Phase RE-1.1では仮画面です。実際のカメラ・WebRTC・Firebase接続は今後のフェーズで接続します。</div>
+        <div class="note-box">この画面は大会ログイン状態をFirestoreへ保存します。カメラ画面では同じ大会IDを入力して大会名と担当情報を読み取れます。</div>
         <div class="form-actions" style="justify-content:center; margin-top:20px;">
           <button id="toLogin" class="secondary-button" type="button">大会ログインへ</button>
           <button id="toHome" class="primary-button" type="button">メインメニューへ戻る</button>
