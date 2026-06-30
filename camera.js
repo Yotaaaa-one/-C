@@ -1043,6 +1043,8 @@
     const remotePlaceholder = $('remotePlaceholder');
     const viewerTitle = $('viewerTitle');
     const viewerState = $('viewerState');
+    const adminViewingGuard = $('adminViewingGuard');
+    const currentViewingSummary = $('currentViewingSummary');
     const qualityDisplay = $('qualityDisplay');
     const memo = $('memo');
     const completeButton = $('completeButton');
@@ -1076,7 +1078,84 @@
     let rulingEyeCallCandidates = [];
     let rulingEyeCandidatesBySessionId = new Map();
     let editingRosterId;
+    let currentViewingSessionId = '';
+    let currentViewingCallId = '';
+    let currentViewingOfficerName = '';
+    let currentViewingDeviceNo = '';
+    let isAdminViewingActiveSession = false;
     debug('signaling', '接続する呼出を選択してください');
+    debug('viewingGuard', '対応中セッションなし');
+
+    function hasActiveViewingSession() {
+      return Boolean(isAdminViewingActiveSession && currentViewingSessionId);
+    }
+
+    function currentViewingLabel() {
+      const deviceLabel = currentViewingDeviceNo ? `No.${currentViewingDeviceNo}` : '';
+      return [deviceLabel, currentViewingOfficerName || '映像接続準備中'].filter(Boolean).join(' ');
+    }
+
+    function applyViewingSessionButtonGuard() {
+      const active = hasActiveViewingSession();
+      document.querySelectorAll('[data-connect], [data-review-call]').forEach((button) => {
+        const targetSessionId = String(button.dataset.connect || button.dataset.reviewCall || '');
+        const blocked = active && targetSessionId !== currentViewingSessionId;
+        button.disabled = blocked;
+        button.classList.toggle('is-viewing-locked', blocked);
+        if (blocked) {
+          button.title = '現在対応中の映像があります。対応完了後に確認してください。';
+        } else if (button.title === '現在対応中の映像があります。対応完了後に確認してください。') {
+          button.removeAttribute('title');
+        }
+        button.closest('.camera-call-card')?.classList.toggle('is-viewing-locked', blocked);
+      });
+    }
+
+    function updateViewingGuardUi() {
+      const active = hasActiveViewingSession();
+      if (adminViewingGuard) adminViewingGuard.dataset.state = active ? 'active' : 'idle';
+      if (currentViewingSummary) {
+        currentViewingSummary.textContent = active
+          ? `現在対応中: ${currentViewingLabel()}。別の映像を見る場合は、先に対応完了してください。`
+          : '現在対応中: なし';
+      }
+      applyViewingSessionButtonGuard();
+    }
+
+    function setCurrentViewingSession({ sessionId, callId = '', officerName = '', deviceNo = '' }) {
+      currentViewingSessionId = String(sessionId || '');
+      currentViewingCallId = String(callId || '');
+      currentViewingOfficerName = String(officerName || '');
+      currentViewingDeviceNo = String(deviceNo || '');
+      isAdminViewingActiveSession = Boolean(currentViewingSessionId);
+      debug('viewingGuard', isAdminViewingActiveSession
+        ? `対応中セッション: ${currentViewingSessionId} / ${currentViewingLabel()}`
+        : '対応中セッションなし');
+      updateViewingGuardUi();
+    }
+
+    function clearCurrentViewingSession() {
+      currentViewingSessionId = '';
+      currentViewingCallId = '';
+      currentViewingOfficerName = '';
+      currentViewingDeviceNo = '';
+      isAdminViewingActiveSession = false;
+      debug('viewingGuard', '対応中セッションなし');
+      updateViewingGuardUi();
+    }
+
+    function showViewingSessionGuard(requestedSessionId) {
+      const message = '現在対応中の映像があります。対応完了後に別の映像を確認してください。';
+      console.warn(message, {
+        currentViewingSessionId,
+        currentViewingCallId,
+        requestedSessionId
+      });
+      debug('viewingGuard', `接続を停止: ${currentViewingSessionId} の対応完了待ち`);
+      showError(error, message);
+      setStatus(status, `現在 ${currentViewingLabel()} の映像を確認中です`, 'calling');
+      updateViewingGuardUi();
+    }
 
     function updateQualityDisplay(data) {
       const quality = QUALITY_MODES[data?.qualityMode] || QUALITY_MODES.standard;
@@ -1685,7 +1764,11 @@
     }
     function renderHqCalls(calls) {
       const sorted = calls.sort((a, b) => (b.requestedAt?.toMillis?.() || 0) - (a.requestedAt?.toMillis?.() || 0));
-      if (!sorted.length) { hqCallList.innerHTML = '<p class="camera-empty">映像依頼はありません。</p>'; return; }
+      if (!sorted.length) {
+        hqCallList.innerHTML = '<p class="camera-empty">映像依頼はありません。</p>';
+        updateViewingGuardUi();
+        return;
+      }
       hqCallList.innerHTML = sorted.map((call) => {
         const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '対応不可', ended: '完了', missed: '未応答' }[call.status] || call.status;
         const canReview = call.sessionId && ['accepted', 'connected'].includes(call.status);
@@ -1696,6 +1779,7 @@
           ${canReview ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(call.sessionId)}">映像を確認</button>` : ''}
         </article>`;
       }).join('');
+      updateViewingGuardUi();
     }
     async function sendHqRequest() {
       const hole = requestHole.value.trim();
@@ -1773,6 +1857,7 @@
       activeCallRef = null;
       activeOfficerRef = null;
       activeAssignmentRef = null;
+      clearCurrentViewingSession();
       remoteVideo.srcObject = null;
       remoteVideo.muted = true;
       setPlaceholderVisible(remotePlaceholder, true, '接続する呼出を選択してください');
@@ -1826,18 +1911,27 @@
         const aTime = a.createdAt?.toMillis?.() || 0; const bTime = b.createdAt?.toMillis?.() || 0; return aTime - bTime;
       });
       callCount.textContent = displaySessions.length;
-      if (!displaySessions.length) { callList.innerHTML = '<p class="camera-empty">現在、呼出はありません。</p>'; return; }
+      if (!displaySessions.length) {
+        callList.innerHTML = '<p class="camera-empty">現在、呼出はありません。</p>';
+        updateViewingGuardUi();
+        return;
+      }
       callList.innerHTML = displaySessions.map((item) => `
         <article class="camera-call-card" data-status="${item.status}" data-session-id="${escapeHtml(item.id)}">
           <div class="camera-card-top"><span class="camera-card-name">${escapeHtml(item.officerName || '名前未入力')}</span><span class="camera-card-status">${item.status === 'connected' ? '対応中' : '呼出中'}</span></div>
           <div class="camera-card-meta"><span>${escapeHtml(item.hole || '-')}H / ${escapeHtml(item.groupNo || '-')}組</span><time>${formatTime(item.createdAt)}</time></div>
           <button class="camera-button camera-button-primary" type="button" data-connect="${escapeHtml(item.id)}">${item.status === 'connected' ? '映像を確認' : '接続'}</button>
         </article>`).join('');
+      updateViewingGuardUi();
     }
     async function watchCalls() {
       const tournamentId = cleanTournamentId(tournamentInput.value);
       showError(error, '');
       if (!tournamentId) { setStatus(status, '大会IDを入力してください', 'error'); return; }
+      if (hasActiveViewingSession()) {
+        showViewingSessionGuard('monitoring-restart');
+        return;
+      }
       try {
         const tournamentChanged = activeTournamentId !== tournamentId;
         db = db || createFirebase();
@@ -1908,7 +2002,21 @@
     }
     async function connect(sessionId) {
       if (!db || !activeTournamentId) return;
-      resetViewer(); showError(error, '');
+      const requestedSessionId = String(sessionId || '');
+      if (!requestedSessionId) return;
+      if (hasActiveViewingSession()) {
+        if (currentViewingSessionId !== requestedSessionId) {
+          showViewingSessionGuard(requestedSessionId);
+          return;
+        }
+        showError(error, '');
+        setStatus(status, `現在 ${currentViewingLabel()} の映像を確認中です`, 'connected');
+        debug('viewingGuard', `同一セッションを確認中: ${currentViewingSessionId}`);
+        return;
+      }
+      resetViewer();
+      setCurrentViewingSession({ sessionId: requestedSessionId });
+      showError(error, '');
       const ref = sessionRef(db, activeTournamentId, sessionId);
       try {
         const snapshot = await ref.get();
@@ -1916,6 +2024,12 @@
         const data = snapshot.data();
         if (!data.offer) throw new Error('競技委員側の接続準備を待っています。数秒後にもう一度お試しください。');
         debug('offer', 'offer受信');
+        setCurrentViewingSession({
+          sessionId: requestedSessionId,
+          callId: data.callId,
+          officerName: data.officerName,
+          deviceNo: data.deviceNo
+        });
         activeSession = ref;
         activeCallRef = data.callId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_calls').doc(data.callId) : null;
         activeOfficerRef = data.officerId ? db.collection('tournaments').doc(activeTournamentId).collection('camera_officers').doc(data.officerId) : null;
@@ -1941,7 +2055,12 @@
         peer.onicecandidate = (event) => { if (event.candidate) ref.collection('answerCandidates').add(event.candidate.toJSON()).catch(console.warn); };
         peer.onconnectionstatechange = () => {
           if (peer?.connectionState === 'connected') { viewerState.textContent = '接続中'; viewerState.dataset.state = 'connected'; setStatus(status, '映像を確認中', 'connected'); }
-          if (peer?.connectionState === 'failed') { showError(error, '映像接続に失敗しました。ネットワークまたはTURNサーバーの設定を確認してください。'); viewerState.textContent = '接続失敗'; viewerState.dataset.state = 'idle'; }
+          if (peer?.connectionState === 'failed') {
+            showError(error, '映像接続に失敗しました。ネットワークまたはTURNサーバーの設定を確認してください。');
+            resetViewer();
+            debug('viewingGuard', '接続失敗のため対応中ガードを解除');
+            setStatus(status, '映像接続に失敗しました', 'error');
+          }
         };
         await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
         for (const candidate of queuedCandidates) await peer.addIceCandidate(new RTCIceCandidate(candidate));
@@ -1962,7 +2081,13 @@
           if (current) updateQualityDisplay(current);
           if (current?.status === 'ended') { resetViewer(); setStatus(status, '競技委員側で終了しました'); }
         });
-      } catch (err) { console.error(err); showError(error, `接続できませんでした: ${err.message}`); resetViewer(); }
+      } catch (err) {
+        console.error(err);
+        showError(error, `接続できませんでした: ${err.message}`);
+        resetViewer();
+        debug('viewingGuard', '接続失敗のため対応中ガードを解除');
+        setStatus(status, '映像接続に失敗しました', 'error');
+      }
     }
     async function complete() {
       if (!activeSession) return;

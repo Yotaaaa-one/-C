@@ -160,9 +160,15 @@ button { cursor: pointer; }
 .admin-state-badge.state-call-declined, .admin-state-badge.state-call-missed { color: #99232a; background: #f8dfe1; }
 .camera-csv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.camera-csv-actions .camera-button { min-height: 40px; padding: 8px; font-size: .8rem; }.camera-csv-result { margin: 0; border-radius: 7px; padding: 8px 10px; color: var(--camera-muted); background: #f1f5f7; font-size: .78rem; line-height: 1.45; white-space: pre-wrap; }.camera-csv-result[data-tone="success"] { color: var(--camera-green); background: #effaf7; }.camera-csv-result[data-tone="error"] { color: var(--camera-red); background: #fff3f3; }.camera-csv-sample { color: var(--camera-muted); font-size: .78rem; }.camera-csv-sample summary { cursor: pointer; color: var(--camera-blue-dark); font-weight: 800; }.camera-csv-sample pre { overflow-x: auto; margin: 7px 0 0; border-radius: 6px; padding: 8px; color: #30485a; background: #f5f8fa; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .7rem; line-height: 1.45; }
 .camera-call-card { display: grid; gap: 10px; border: 2px solid #e5a031; border-radius: 11px; padding: 14px; background: #fff9ed; box-shadow: 0 3px 10px rgb(116 77 12 / 10%); }.camera-call-card[data-status="connected"] { border-color: #77b9aa; background: #f2fbf8; }
+.camera-call-card.is-viewing-locked { border-color: #cbd5dc; background: #f5f7f8; }
 .camera-card-top, .camera-card-meta { display: flex; justify-content: space-between; gap: 12px; }.camera-card-name { color: var(--camera-navy); font-weight: 800; }.camera-card-status { color: #986000; font-size: .78rem; font-weight: 800; }.camera-call-card[data-status="connected"] .camera-card-status { color: var(--camera-green); }
 .camera-card-meta { color: var(--camera-muted); font-size: .8rem; }.camera-call-card .camera-button { min-height: 41px; }
 .camera-viewer-column { display: grid; gap: 18px; min-width: 0; }.camera-viewer-panel { padding: 20px; }.camera-remote-wrap { aspect-ratio: 16 / 9; margin-top: 14px; min-height: 420px; }.camera-state-badge { border-radius: 99px; padding: 5px 9px; color: var(--camera-muted); background: #e6edf1; font-size: .76rem; font-weight: 800; }.camera-state-badge[data-state="connected"] { color: #fff; background: var(--camera-green); }.camera-state-badge[data-state="calling"] { color: #734600; background: #ffdc9d; }
+.camera-viewing-guard { display: grid; gap: 5px; margin-top: 12px; border: 1px solid var(--camera-line); border-radius: 9px; padding: 10px 12px; color: var(--camera-muted); background: #f5f8fa; font-size: .78rem; line-height: 1.45; }
+.camera-viewing-guard p { margin: 0; }
+.camera-viewing-guard[data-state="active"] { border-color: #e0ad51; color: #704500; background: #fff6e2; }
+.camera-viewing-summary { color: var(--camera-navy); font-weight: 900; }
+.camera-viewing-guard[data-state="active"] .camera-viewing-summary { color: #8a5200; }
 .camera-memo-panel { display: grid; gap: 13px; }
 .camera-video-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }.camera-video-actions .camera-button { min-width: 145px; }
 

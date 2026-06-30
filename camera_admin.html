@@ -137,6 +137,10 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
             <h2 id="viewerTitle">映像確認</h2>
             <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
           </div>
+          <div id="adminViewingGuard" class="camera-viewing-guard" data-state="idle" role="status" aria-live="polite">
+            <p><strong>運用ルール:</strong> 本部で確認できる映像は1件ずつです。別の競技委員映像を確認する場合は、現在の対応を完了してください。</p>
+            <p id="currentViewingSummary" class="camera-viewing-summary">現在対応中: なし</p>
+          </div>
           <p id="qualityDisplay" class="camera-quality-display">画質: 未取得</p>
           <div class="camera-remote-wrap">
             <video id="remoteVideo" class="camera-video camera-remote-video" autoplay playsinline muted controls></video>
