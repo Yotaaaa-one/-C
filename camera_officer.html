@@ -19,7 +19,7 @@
         <label class="camera-field camera-field-wide">大会ID
           <input id="tournamentId" type="text" inputmode="text" autocomplete="off" placeholder="例: 2026_01" required>
         </label>
-        <label class="camera-field">競技委員名
+        <label class="camera-field">競技委員名（手動運用時）
           <input id="officerName" type="text" autocomplete="name" placeholder="氏名" required>
         </label>
         <label class="camera-field">ホール番号
@@ -31,8 +31,8 @@
       </div>
     </section>
 
-    <section class="camera-panel device-panel" aria-label="固定端末の割当">
-      <div class="camera-section-heading"><h2>固定端末の割当</h2></div>
+    <section class="camera-panel device-panel ruling-eye-device-selector" aria-label="Ruling Eye端末設定">
+      <div class="camera-section-heading"><h2>Ruling Eye端末設定</h2></div>
       <label class="camera-field">iPhone No.
         <select id="deviceNoSelect">
           <option value="1">iPhone No.1</option><option value="2">iPhone No.2</option><option value="3">iPhone No.3</option><option value="4">iPhone No.4</option><option value="5">iPhone No.5</option><option value="6">iPhone No.6</option><option value="7">iPhone No.7</option>
@@ -42,16 +42,25 @@
         <button id="saveDeviceButton" class="camera-button camera-button-secondary" type="button">端末No.を保存</button>
         <button id="checkAssignmentButton" class="camera-button camera-button-primary" type="button">割当確認</button>
       </div>
-      <p id="assignmentDisplay" class="camera-assignment-display">この端末の大会割当を確認してください。</p>
+      <p id="assignmentDisplay" class="camera-assignment-display">この端末の大会割当を確認してください。手動運用時の予備確認として使用できます。</p>
     </section>
 
-    <section class="camera-panel ruling-eye-device-panel" aria-label="Ruling Eye端末情報">
-      <div class="camera-section-heading"><h2>Ruling Eye端末情報</h2></div>
-      <button id="loadRulingEyeDeviceButton" class="camera-button camera-button-secondary" type="button">端末情報を読み込む</button>
-      <p id="rulingEyeDeviceStatus" class="ruling-eye-status">大会IDとiPhone No.を確認して読み込んでください。</p>
-      <div id="rulingEyeDeviceSummary" class="ruling-eye-summary-grid">
-        <p class="camera-empty">端末情報は未読込です。</p>
+    <section class="camera-panel ruling-eye-device-panel ruling-eye-device-primary" aria-label="Ruling Eye端末情報">
+      <div class="camera-section-heading">
+        <h2>Ruling Eye端末情報</h2>
+        <span class="camera-state-badge" data-state="connected">主運用</span>
       </div>
+      <button id="loadRulingEyeDeviceButton" class="camera-button camera-button-primary" type="button">端末情報を読み込む</button>
+      <p id="rulingEyeDeviceStatus" class="ruling-eye-status">大会IDとiPhone No.を確認して読み込んでください。</p>
+      <div id="rulingEyeDeviceSummary" class="ruling-eye-summary-grid ruling-eye-device-summary">
+        <div class="ruling-eye-device-hero" data-state="idle">
+          <span>この端末: iPhone No.-</span>
+          <strong>担当: 端末情報未読込</strong>
+          <small>役割: -</small>
+          <em>状態: 読込待ち</em>
+        </div>
+      </div>
+      <p class="ruling-eye-manual-note">Ruling Eyeログインがないテスト時のみ、上部の競技委員名と「割当確認」を使用して手動待機できます。</p>
     </section>
 
     <section class="camera-panel camera-wait-panel" aria-label="本部呼出待機">
@@ -81,6 +90,8 @@
 
     <section id="incomingCallPanel" class="camera-incoming-call" aria-live="assertive" hidden>
       <p class="camera-incoming-kicker">本部から映像依頼</p>
+      <p id="incomingCallTournament" class="camera-incoming-detail">大会名: -</p>
+      <p id="incomingCallTarget" class="camera-incoming-detail">対象: -</p>
       <h2 id="incomingCallLocation">-</h2>
       <p id="incomingCallReason" class="camera-incoming-reason">理由: -</p>
       <div class="camera-incoming-actions">

@@ -149,6 +149,8 @@
     const stopWaitingButton = $('stopWaitingButton');
     const waitingState = $('waitingState');
     const incomingCallPanel = $('incomingCallPanel');
+    const incomingCallTournament = $('incomingCallTournament');
+    const incomingCallTarget = $('incomingCallTarget');
     const incomingCallLocation = $('incomingCallLocation');
     const incomingCallReason = $('incomingCallReason');
     const acceptCallButton = $('acceptCallButton');
@@ -177,6 +179,7 @@
     let officerRef;
     let waitingTournamentId = '';
     let waitingHeartbeat;
+    let waitingActive = false;
     let unsubscribeIncomingCalls;
     let incomingCall;
     let activeCallRef;
@@ -190,6 +193,7 @@
         return '1';
       }
     })();
+    if (!['1', '2', '3', '4', '5', '6', '7'].includes(String(deviceNo))) deviceNo = '1';
     debug('camera', 'カメラ取得待機中');
     debug('hq', '本部未接続');
 
@@ -208,13 +212,61 @@
     function setWaitingUi(state) {
       const online = state === 'online';
       const busy = state === 'busy';
-      waitingState.textContent = busy ? '映像対応中' : online ? '本部呼出待機中' : '待機停止中';
+      waitingState.textContent = busy ? '映像共有中' : online ? '本部からの映像依頼を待機中' : '待機停止中';
       waitingState.dataset.state = busy ? 'calling' : online ? 'connected' : 'idle';
       startWaitingButton.disabled = online || busy;
       stopWaitingButton.disabled = !online;
+      const deviceHero = rulingEyeDeviceSummary?.querySelector('.ruling-eye-device-hero');
+      const deviceHeroState = deviceHero?.querySelector('em');
+      if (deviceHero && deviceHeroState && currentRulingEyeDevice) {
+        deviceHero.dataset.state = 'ready';
+        deviceHeroState.textContent = busy
+          ? '状態: 映像共有中'
+          : online
+            ? '状態: 本部呼出待機中'
+            : '状態: 待機可能';
+      }
     }
-    function assignedOfficerId() { return assignmentData?.officerId || officerId; }
-    function assignedOfficerName() { return assignmentData?.officerName || nameInput.value.trim(); }
+    function usableOfficerId(value) {
+      const normalized = String(value || '').trim();
+      return normalized && normalized.toLowerCase() !== 'other' ? normalized : '';
+    }
+    function stableRulingEyeOfficerId() {
+      const currentId = usableOfficerId(currentRulingEyeDevice?.officerId);
+      if (currentId) return currentId;
+      const sessionId = String(currentRulingEyeDevice?.sessionId || '').trim().replaceAll('/', '-');
+      if (sessionId) return `session_${sessionId}`;
+      return `device_${String(currentRulingEyeDevice?.deviceNo || deviceNo || 'unknown')}`;
+    }
+    function assignedOfficerId() {
+      return currentRulingEyeDevice ? stableRulingEyeOfficerId() : assignmentData?.officerId || officerId;
+    }
+    function assignedOfficerName() {
+      return currentRulingEyeDevice?.officerName || assignmentData?.officerName || nameInput.value.trim();
+    }
+    function currentAssignmentId() {
+      return currentRulingEyeDevice?.assignmentId || assignmentData?.id || '';
+    }
+    function currentLoginIdentity() {
+      if (!currentRulingEyeDevice) {
+        return {
+          tournamentName: '',
+          loginRole: '',
+          roleLabel: '',
+          loginSessionId: '',
+          assignmentId: assignmentData?.id || '',
+          source: 'manual'
+        };
+      }
+      return {
+        tournamentName: currentRulingEyeDevice.tournamentName,
+        loginRole: currentRulingEyeDevice.loginRole,
+        roleLabel: currentRulingEyeDevice.roleLabel,
+        loginSessionId: currentRulingEyeDevice.sessionId,
+        assignmentId: currentRulingEyeDevice.assignmentId,
+        source: 'ruling_eye_login'
+      };
+    }
     function assignmentStatusDisplay(message, tone = '') {
       assignmentDisplay.textContent = message;
       assignmentDisplay.dataset.tone = tone;
@@ -224,6 +276,17 @@
       rulingEyeDeviceStatus.textContent = message;
       rulingEyeDeviceStatus.dataset.tone = tone;
     }
+    function renderRulingEyeDeviceIdle(message = '端末情報未読込', state = 'idle') {
+      if (!rulingEyeDeviceSummary) return;
+      rulingEyeDeviceSummary.innerHTML = `
+        <div class="ruling-eye-device-hero" data-state="${escapeHtml(state)}">
+          <span>この端末: iPhone No.${escapeHtml(deviceNo)}</span>
+          <strong>担当: ${escapeHtml(message)}</strong>
+          <small>役割: ${String(deviceNo) === '1' ? '競技委員長' : '競技委員'}</small>
+          <em>状態: 読込待ち</em>
+        </div>
+      `;
+    }
     function renderRulingEyeDeviceSummary(data) {
       if (!rulingEyeDeviceSummary) return;
       const setting = data.setting || {};
@@ -231,41 +294,65 @@
       if (!data.settingExists) {
         currentRulingEyeDevice = null;
         setRulingEyeDeviceStatus('この大会IDのRuling Eye大会設定が見つかりません。ruling_eye.html で大会設定を作成してください。', 'error');
-        rulingEyeDeviceSummary.innerHTML = '<p class="camera-empty">この大会IDのRuling Eye大会設定が見つかりません。ruling_eye.html で大会設定を作成してください。</p>';
+        rulingEyeDeviceSummary.innerHTML = `
+          <div class="ruling-eye-device-hero" data-state="error">
+            <span>この端末: iPhone No.${escapeHtml(deviceNo)}</span>
+            <strong>担当: 未設定</strong>
+            <small>役割: ${String(deviceNo) === '1' ? '競技委員長' : '競技委員'}</small>
+            <em>状態: 大会設定なし</em>
+          </div>
+        `;
         return;
       }
       if (setting.deleted === true) {
         currentRulingEyeDevice = null;
         setRulingEyeDeviceStatus('この大会設定は削除済みです。', 'warning');
-        rulingEyeDeviceSummary.innerHTML = '<p class="camera-empty">この大会設定は削除済みです。</p>';
+        rulingEyeDeviceSummary.innerHTML = `
+          <div class="ruling-eye-device-hero" data-state="error">
+            <span>この端末: iPhone No.${escapeHtml(deviceNo)}</span>
+            <strong>担当: 未設定</strong>
+            <small>役割: ${String(deviceNo) === '1' ? '競技委員長' : '競技委員'}</small>
+            <em>状態: 大会削除済み</em>
+          </div>
+        `;
         return;
       }
       const login = data.loginSession || null;
       if (login) {
+        const assignment = data.assignment || null;
+        const currentRoleLabel = String(deviceNo) === '1' ? '競技委員長' : roleLabel(login.loginRole);
         currentRulingEyeDevice = {
           tournamentId: data.tournamentId,
           tournamentName: setting.tournamentName || login.tournamentName || data.tournamentId,
           deviceNo: String(deviceNo),
           loginRole: login.loginRole || '',
+          roleLabel: currentRoleLabel,
           officerId: login.officerId || '',
           officerName: login.officerName || '',
-          sessionId: login.sessionId || login.id || ''
+          sessionId: login.sessionId || login.id || '',
+          assignmentId: login.assignmentId || assignment?.assignmentId || assignment?.id || ''
         };
-        setRulingEyeDeviceStatus('Ruling Eye端末情報を読み込みました。', 'success');
+        nameInput.value = currentRulingEyeDevice.officerName || nameInput.value;
+        setRulingEyeDeviceStatus('Ruling Eye端末情報を読み込みました。待機開始できます。', 'success');
       } else {
         currentRulingEyeDevice = null;
-        const guidance = String(deviceNo) === '1' && setting.chiefOfficerName
-          ? '競技委員長ログインがまだ行われていません。ruling_eye.html の大会ログインから No.1 を設定してください。'
+        const guidance = String(deviceNo) === '1'
+          ? 'このiPhone No.1 は競技委員長ログインがまだ行われていません。ruling_eye.html の大会ログインで競技委員長ログインを行ってください。'
           : 'このiPhone No.は本大会でログインされていません。ruling_eye.html の大会ログインから設定してください。';
         setRulingEyeDeviceStatus(guidance, 'warning');
       }
-      const officerName = login?.officerName || (String(deviceNo) === '1' ? setting.chiefOfficerName : '') || '-';
-      const loginKind = login ? roleLabel(login.loginRole) : (String(deviceNo) === '1' ? '競技委員長' : '競技委員');
+      const officerName = currentRulingEyeDevice?.officerName || '-';
+      const loginKind = currentRulingEyeDevice?.roleLabel || (String(deviceNo) === '1' ? '競技委員長' : '競技委員');
       const loginState = login ? 'ログイン済み' : '未ログイン';
       rulingEyeDeviceSummary.innerHTML = `
+        <div class="ruling-eye-device-hero" data-state="${login ? 'ready' : 'offline'}">
+          <span>この端末: iPhone No.${escapeHtml(deviceNo)}</span>
+          <strong>担当: ${escapeHtml(officerName)}</strong>
+          <small>役割: ${escapeHtml(loginKind)}</small>
+          <em>状態: ${login ? '待機可能' : '未ログイン'}</em>
+        </div>
         <div class="ruling-eye-info-card"><span>大会ID</span><strong>${escapeHtml(data.tournamentId)}</strong></div>
         <div class="ruling-eye-info-card"><span>大会名</span><strong>${escapeHtml(setting.tournamentName || data.tournamentId)}</strong></div>
-        <div class="ruling-eye-info-card"><span>年度</span><strong>${escapeHtml(setting.year || '-')}</strong></div>
         <div class="ruling-eye-info-card"><span>この端末</span><strong>iPhone No.${escapeHtml(deviceNo)}</strong></div>
         <div class="ruling-eye-info-card"><span>担当者</span><strong>${escapeHtml(officerName)}</strong></div>
         <div class="ruling-eye-info-card"><span>ログイン種別</span><strong>${escapeHtml(loginKind)}</strong></div>
@@ -291,21 +378,38 @@
         if (loadRulingEyeDeviceButton) loadRulingEyeDeviceButton.disabled = true;
         setRulingEyeDeviceStatus('Ruling Eye端末情報を読み込み中です…');
         const tournamentRef = db.collection('tournaments').doc(tournamentId);
-        const [settingsDoc, sessionsSnapshot] = await Promise.all([
+        const [settingsDoc, sessionsSnapshot, assignmentsSnapshot] = await Promise.all([
           tournamentRef.collection('ruling_eye_settings').doc('main').get(),
-          tournamentRef.collection('ruling_eye_login_sessions').get()
+          tournamentRef.collection('ruling_eye_login_sessions').get(),
+          tournamentRef.collection('camera_assignments').get()
         ]);
         const sessions = sessionsSnapshot.docs.map((doc) => ({ id: doc.id, sessionId: doc.id, ...doc.data() }));
+        const assignments = assignmentsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          assignmentId: doc.id,
+          ref: doc.ref,
+          ...doc.data()
+        }));
         const loginSession = activeLoginSessions(sessions)
           .filter((session) => String(session.deviceNo || '') === String(deviceNo))
           .filter((session) => ['chief', 'officer'].includes(session.loginRole))
-          .sort((a, b) => (b.loginAt?.toMillis?.() || 0) - (a.loginAt?.toMillis?.() || 0))[0] || null;
+          .sort((a, b) => {
+            const aTime = a.loginAt?.toMillis?.() || new Date(a.loginAt || 0).getTime() || 0;
+            const bTime = b.loginAt?.toMillis?.() || new Date(b.loginAt || 0).getTime() || 0;
+            return bTime - aTime;
+          })[0] || null;
+        const assignment = assignments.find((item) => loginSession?.officerId && item.officerId === loginSession.officerId)
+          || assignments.find((item) => String(item.deviceNo || '') === String(deviceNo))
+          || null;
+        assignmentData = assignment ? { ...assignment } : null;
+        assignmentRef = assignment?.ref || null;
         const data = {
           tournamentId,
           settingExists: settingsDoc.exists,
           setting: settingsDoc.exists ? settingsDoc.data() : null,
           loginSessions: sessions,
           loginSession,
+          assignment,
           loadedAt: new Date()
         };
         renderRulingEyeDeviceSummary(data);
@@ -313,6 +417,7 @@
       } catch (readError) {
         console.error('Ruling Eye officer data read failed', readError);
         currentRulingEyeDevice = null;
+        renderRulingEyeDeviceIdle('読込失敗', 'error');
         const message = rulingEyeReadErrorMessage(readError);
         setRulingEyeDeviceStatus(message, 'error');
         showError(error, message);
@@ -347,7 +452,17 @@
     async function updateOfficerStatus(status, extra = {}) {
       if (!officerRef) return;
       await officerRef.set({ status, lastSeen: serverTime(), updatedAt: serverTime(), ...extra }, { merge: true });
-      if (assignmentRef) await assignmentRef.set({ status, lastSeen: serverTime(), updatedAt: serverTime(), ...extra }, { merge: true });
+      if (assignmentRef) {
+        const assignmentStatus = {
+          status,
+          lastSeen: serverTime(),
+          updatedAt: serverTime()
+        };
+        ['currentSessionId', 'qualityMode', 'qualityLabel', 'deviceNo'].forEach((key) => {
+          if (extra[key] !== undefined) assignmentStatus[key] = extra[key];
+        });
+        await assignmentRef.set(assignmentStatus, { merge: true });
+      }
       setWaitingUi(status);
     }
     function hideIncomingCall() {
@@ -357,15 +472,43 @@
     function showIncomingCall(call) {
       if (activeSession) return;
       incomingCall = call;
+      if (incomingCallTournament) {
+        incomingCallTournament.textContent = `大会名: ${call.tournamentName || currentRulingEyeDevice?.tournamentName || waitingTournamentId || '-'}`;
+      }
+      if (incomingCallTarget) {
+        incomingCallTarget.textContent = `対象: No.${call.deviceNo || currentRulingEyeDevice?.deviceNo || deviceNo} ${call.targetOfficerName || currentRulingEyeDevice?.officerName || assignedOfficerName() || '-'}`;
+      }
       incomingCallLocation.textContent = `${call.hole || '-'}H / ${call.groupNo || '-'}組`;
       incomingCallReason.textContent = `理由: ${call.reason || '本部確認'}`;
       incomingCallPanel.hidden = false;
     }
+    function requestedCallMatches(call, effectiveOfficerId, effectiveOfficerName) {
+      if (call.status !== 'requested') return false;
+      const current = currentRulingEyeDevice;
+      const matches = (left, right) => Boolean(String(left || '').trim() && String(right || '').trim() && String(left) === String(right));
+      const rulingEyeMatch = current && (
+        matches(call.targetOfficerId, current.officerId)
+        || matches(call.deviceNo, current.deviceNo)
+        || matches(call.loginSessionId, current.sessionId)
+        || matches(call.assignmentId, current.assignmentId)
+      );
+      const manualMatch = matches(call.targetOfficerId, effectiveOfficerId)
+        || matches(call.deviceNo, deviceNo)
+        || matches(call.targetOfficerName, effectiveOfficerName);
+      return Boolean(rulingEyeMatch || manualMatch);
+    }
     async function startWaiting() {
       const tournamentId = cleanTournamentId(tournamentInput.value);
-      await loadAssignment();
+      deviceNo = String(deviceNoSelect.value || deviceNo || '1');
+      if (!currentRulingEyeDevice
+          || currentRulingEyeDevice.tournamentId !== tournamentId
+          || currentRulingEyeDevice.deviceNo !== deviceNo) {
+        await loadRulingEyeCameraOfficerData();
+      }
+      if (!currentRulingEyeDevice && !assignmentData) await loadAssignment();
       const officerName = assignedOfficerName();
       const effectiveOfficerId = assignedOfficerId();
+      const identity = currentLoginIdentity();
       showError(error, '');
       if (!tournamentId || !officerName) {
         showError(error, '待機開始には大会IDと競技委員名を入力してください。');
@@ -379,22 +522,60 @@
         officerRef = db.collection('tournaments').doc(tournamentId).collection('camera_officers').doc(effectiveOfficerId);
         const existingOfficer = await officerRef.get();
         const officerData = {
-          officerId: effectiveOfficerId, officerName, deviceNo: String(deviceNo), assignmentId: assignmentData?.id || '', status: activeSession ? 'busy' : 'online', currentSessionId: activeSession?.id || '',
+          officerId: effectiveOfficerId,
+          officerName,
+          tournamentId,
+          tournamentName: identity.tournamentName || tournamentId,
+          deviceNo: String(deviceNo),
+          loginRole: identity.loginRole,
+          roleLabel: identity.roleLabel,
+          loginSessionId: identity.loginSessionId,
+          assignmentId: identity.assignmentId || currentAssignmentId(),
+          source: identity.source,
+          status: activeSession ? 'busy' : 'online',
+          currentSessionId: activeSession?.id || '',
           qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, lastSeen: serverTime(),
           updatedAt: serverTime(), deviceType: deviceType()
         };
         if (!existingOfficer.exists) officerData.createdAt = serverTime();
         await officerRef.set(officerData, { merge: true });
-        await updateOfficerStatus(activeSession ? 'busy' : 'online', { currentSessionId: activeSession?.id || '', qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label, deviceNo: String(deviceNo), assignmentId: assignmentData?.id || '' });
+        waitingActive = true;
+        await updateOfficerStatus(activeSession ? 'busy' : 'online', {
+          currentSessionId: activeSession?.id || '',
+          officerName,
+          tournamentId,
+          tournamentName: identity.tournamentName || tournamentId,
+          deviceNo: String(deviceNo),
+          loginRole: identity.loginRole,
+          roleLabel: identity.roleLabel,
+          loginSessionId: identity.loginSessionId,
+          assignmentId: identity.assignmentId || currentAssignmentId(),
+          source: identity.source,
+          qualityMode,
+          qualityLabel: QUALITY_MODES[qualityMode].label
+        });
         waitingHeartbeat = setInterval(() => {
-          updateOfficerStatus(activeSession ? 'busy' : 'online', { currentSessionId: activeSession?.id || '', qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label }).catch(console.warn);
+          updateOfficerStatus(activeSession ? 'busy' : 'online', {
+            currentSessionId: activeSession?.id || '',
+            officerName,
+            deviceNo: String(deviceNo),
+            loginRole: identity.loginRole,
+            roleLabel: identity.roleLabel,
+            loginSessionId: identity.loginSessionId,
+            assignmentId: identity.assignmentId || currentAssignmentId(),
+            qualityMode,
+            qualityLabel: QUALITY_MODES[qualityMode].label
+          }).catch(console.warn);
         }, 25000);
         unsubscribeIncomingCalls = db.collection('tournaments').doc(tournamentId).collection('camera_calls').onSnapshot((snapshot) => {
-          const requested = snapshot.docs.map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() })).filter((call) => call.status === 'requested' && (call.targetOfficerId === effectiveOfficerId || String(call.deviceNo || '') === String(deviceNo)));
+          const requested = snapshot.docs
+            .map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() }))
+            .filter((call) => requestedCallMatches(call, effectiveOfficerId, officerName));
           if (requested.length) showIncomingCall(requested.sort((a, b) => (a.requestedAt?.toMillis?.() || 0) - (b.requestedAt?.toMillis?.() || 0))[0]);
           else if (!activeSession) hideIncomingCall();
         }, (listenError) => showError(error, `本部呼出を受信できませんでした: ${listenError.message}`));
       } catch (waitError) {
+        waitingActive = false;
         showError(error, `待機を開始できませんでした: ${waitError.message}`);
         setWaitingUi('offline');
       }
@@ -404,6 +585,7 @@
       unsubscribeIncomingCalls = null;
       if (waitingHeartbeat) clearInterval(waitingHeartbeat);
       waitingHeartbeat = null;
+      waitingActive = false;
       hideIncomingCall();
       try { await updateOfficerStatus(activeSession ? 'busy' : 'offline', { currentSessionId: activeSession?.id || '' }); } catch (waitError) { console.warn('待機終了状態を保存できませんでした', waitError); }
       if (!activeSession) setWaitingUi('offline');
@@ -541,17 +723,19 @@
         try { await session.update({ status: 'ended', endedAt: serverTime() }); } catch (err) { console.warn('終了状態を保存できませんでした', err); }
       }
       if (callRef) {
-        try { await callRef.update({ status: 'ended', endedAt: serverTime() }); } catch (err) { console.warn('呼出終了状態を保存できませんでした', err); }
+        try { await callRef.update({ status: 'ended', endedAt: serverTime(), updatedAt: serverTime() }); } catch (err) { console.warn('呼出終了状態を保存できませんでした', err); }
       }
       activeCallRef = null;
-      updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
+      updateOfficerStatus(waitingActive ? 'online' : 'offline', { currentSessionId: '' }).catch(console.warn);
       setStatus(status, '終了しました');
     }
 
     async function makeCall(hqCall = null) {
       const tournamentId = cleanTournamentId(tournamentInput.value);
-      const officerName = hqCall?.targetOfficerName || assignedOfficerName();
+      const identity = currentLoginIdentity();
+      const officerName = currentRulingEyeDevice?.officerName || hqCall?.targetOfficerName || assignedOfficerName();
       const effectiveOfficerId = assignedOfficerId();
+      const tournamentName = currentRulingEyeDevice?.tournamentName || hqCall?.tournamentName || tournamentId;
       const hole = String(hqCall?.hole || holeInput.value.trim());
       const groupNo = String(hqCall?.groupNo || groupInput.value.trim());
       showError(error, '');
@@ -578,18 +762,58 @@
         const roomId = activeSession.id;
         activeCallRef = hqCall?.ref || null;
         const sessionData = {
-          officerId: effectiveOfficerId, officerName, hole, groupNo, status: 'calling', roomId, createdAt: serverTime(), connectedAt: null, endedAt: null,
-          memo: '', hqUser: '', callId: hqCall?.id || '', requestMode: hqCall ? 'hq_to_officer' : 'officer_manual', reason: hqCall?.reason || '', deviceNo: String(deviceNo), assignmentId: assignmentData?.id || hqCall?.assignmentId || '', ...currentQualityData()
+          tournamentId,
+          tournamentName,
+          officerId: effectiveOfficerId,
+          officerName,
+          deviceNo: String(currentRulingEyeDevice?.deviceNo || deviceNo),
+          loginRole: identity.loginRole || hqCall?.targetLoginRole || '',
+          roleLabel: identity.roleLabel || hqCall?.targetRoleLabel || '',
+          loginSessionId: identity.loginSessionId || hqCall?.loginSessionId || '',
+          assignmentId: identity.assignmentId || hqCall?.assignmentId || currentAssignmentId(),
+          hole,
+          groupNo,
+          status: 'calling',
+          roomId,
+          createdAt: serverTime(),
+          connectedAt: null,
+          endedAt: null,
+          memo: '',
+          hqUser: '',
+          callId: hqCall?.callId || hqCall?.id || '',
+          requestMode: hqCall?.requestMode || (hqCall ? 'hq_to_officer' : 'officer_manual'),
+          reason: hqCall?.reason || '',
+          ...currentQualityData()
         };
         if (activeCallRef) {
           const batch = db.batch();
           batch.set(activeSession, sessionData);
-          batch.update(activeCallRef, { status: 'accepted', sessionId: activeSession.id, acceptedAt: serverTime() });
+          batch.update(activeCallRef, {
+            status: 'accepted',
+            sessionId: activeSession.id,
+            acceptedAt: serverTime(),
+            updatedAt: serverTime(),
+            deviceNo: sessionData.deviceNo,
+            loginSessionId: sessionData.loginSessionId,
+            assignmentId: sessionData.assignmentId,
+            targetLoginRole: sessionData.loginRole,
+            targetRoleLabel: sessionData.roleLabel
+          });
           await batch.commit();
         } else {
           await activeSession.set(sessionData);
         }
-        await updateOfficerStatus('busy', { currentSessionId: activeSession.id, qualityMode, qualityLabel: QUALITY_MODES[qualityMode].label });
+        await updateOfficerStatus('busy', {
+          currentSessionId: activeSession.id,
+          officerName,
+          deviceNo: sessionData.deviceNo,
+          loginRole: sessionData.loginRole,
+          roleLabel: sessionData.roleLabel,
+          loginSessionId: sessionData.loginSessionId,
+          assignmentId: sessionData.assignmentId,
+          qualityMode,
+          qualityLabel: QUALITY_MODES[qualityMode].label
+        });
 
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         localStream.getTracks().forEach((track) => peer.addTrack(track, localStream));
@@ -599,7 +823,7 @@
         peer.onconnectionstatechange = () => {
           if (peer?.connectionState === 'connected') {
             setStatus(status, '本部と接続中', 'connected'); debug('hq', '本部接続済み');
-            if (activeCallRef) activeCallRef.update({ status: 'connected', connectedAt: serverTime() }).catch(console.warn);
+            if (activeCallRef) activeCallRef.update({ status: 'connected', connectedAt: serverTime(), updatedAt: serverTime() }).catch(console.warn);
           }
           if (['failed', 'disconnected'].includes(peer?.connectionState)) setStatus(status, '接続が切れました。本部を待機中です。', 'calling');
         };
@@ -624,9 +848,9 @@
           if (data.status === 'ended') {
             const callRef = activeCallRef;
             finishLocalCall();
-            if (callRef) callRef.update({ status: 'ended', endedAt: serverTime() }).catch(console.warn);
+            if (callRef) callRef.update({ status: 'ended', endedAt: serverTime(), updatedAt: serverTime() }).catch(console.warn);
             activeCallRef = null;
-            updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
+            updateOfficerStatus(waitingActive ? 'online' : 'offline', { currentSessionId: '' }).catch(console.warn);
             setStatus(status, '本部側で対応完了になりました');
           }
         });
@@ -637,9 +861,9 @@
         showError(error, `映像共有を開始できませんでした: ${err.message}`);
         if (!localStream) debug('camera', `カメラ取得失敗: ${err.name || err.message}`);
         finishLocalCall();
-        if (callRef) callRef.update({ status: 'missed', endedAt: serverTime() }).catch(console.warn);
+        if (callRef) callRef.update({ status: 'missed', endedAt: serverTime(), updatedAt: serverTime() }).catch(console.warn);
         activeCallRef = null;
-        updateOfficerStatus('online', { currentSessionId: '' }).catch(console.warn);
+        updateOfficerStatus(waitingActive ? 'online' : 'offline', { currentSessionId: '' }).catch(console.warn);
         setStatus(status, '開始できませんでした', 'error');
         return false;
       }
@@ -648,28 +872,43 @@
     startButton.addEventListener('click', () => { makeCall(); });
     endButton.addEventListener('click', () => endCall());
     deviceNoSelect.value = String(deviceNo);
-    saveDeviceButton.addEventListener('click', () => {
+    renderRulingEyeDeviceIdle();
+    saveDeviceButton.addEventListener('click', async () => {
       deviceNo = String(deviceNoSelect.value);
       try {
         localStorage.setItem('rulingEyeCameraDeviceNo', deviceNo);
         localStorage.setItem('ruling-eye-device-no', deviceNo);
       } catch (_) { /* private mode fallback */ }
       assignmentData = null; assignmentRef = null;
+      currentRulingEyeDevice = null;
+      renderRulingEyeDeviceIdle();
       assignmentStatusDisplay(`この端末を iPhone No.${deviceNo} に設定しました。大会IDを入力して割当確認してください。`);
       setRulingEyeDeviceStatus(`この端末を iPhone No.${deviceNo} に設定しました。端末情報を読み込んでください。`);
+      if (tournamentInput.value.trim()) await loadRulingEyeCameraOfficerData();
     });
-    deviceNoSelect.addEventListener('change', () => {
+    deviceNoSelect.addEventListener('change', async () => {
       deviceNo = String(deviceNoSelect.value);
       try {
         localStorage.setItem('rulingEyeCameraDeviceNo', deviceNo);
         localStorage.setItem('ruling-eye-device-no', deviceNo);
       } catch (_) { /* private mode fallback */ }
       currentRulingEyeDevice = null;
+      assignmentData = null;
+      assignmentRef = null;
+      renderRulingEyeDeviceIdle();
       setRulingEyeDeviceStatus(`この端末を iPhone No.${deviceNo} に設定しました。`);
+      if (tournamentInput.value.trim()) await loadRulingEyeCameraOfficerData();
     });
     checkAssignmentButton.addEventListener('click', loadAssignment);
     if (loadRulingEyeDeviceButton) loadRulingEyeDeviceButton.addEventListener('click', loadRulingEyeCameraOfficerData);
-    tournamentInput.addEventListener('change', () => { if (tournamentInput.value.trim()) loadAssignment(); });
+    tournamentInput.addEventListener('change', async () => {
+      currentRulingEyeDevice = null;
+      renderRulingEyeDeviceIdle();
+      if (!tournamentInput.value.trim()) return;
+      await loadRulingEyeCameraOfficerData();
+      if (!currentRulingEyeDevice) await loadAssignment();
+    });
+    if (tournamentInput.value.trim()) loadRulingEyeCameraOfficerData();
     startWaitingButton.addEventListener('click', startWaiting);
     stopWaitingButton.addEventListener('click', stopWaiting);
     acceptCallButton.addEventListener('click', async () => {
@@ -691,7 +930,7 @@
       acceptCallButton.disabled = true;
       declineCallButton.disabled = true;
       try {
-        await call.ref.update({ status: 'declined', endedAt: serverTime() });
+        await call.ref.update({ status: 'declined', endedAt: serverTime(), updatedAt: serverTime() });
         hideIncomingCall();
         setStatus(status, '本部からの映像依頼を辞退しました');
       } catch (declineError) {
@@ -744,6 +983,7 @@
       micButton.textContent = track.enabled ? 'マイク ON' : 'マイク OFF';
     });
     window.addEventListener('pagehide', () => {
+      waitingActive = false;
       if (activeSession) activeSession.update({ status: 'ended', endedAt: serverTime() });
       if (officerRef) officerRef.update({ status: 'offline', lastSeen: serverTime(), updatedAt: serverTime() }).catch(() => {});
       if (assignmentRef) assignmentRef.update({ status: 'offline', lastSeen: serverTime(), updatedAt: serverTime() }).catch(() => {});
