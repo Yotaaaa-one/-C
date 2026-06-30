@@ -34,19 +34,35 @@
       <p id="rulingEyeAdminStatus" class="ruling-eye-status">大会IDを入力して「最新データ取得」を押してください。</p>
     </section>
 
+    <section class="camera-panel camera-admin-monitor-panel" aria-labelledby="adminMonitorTitle">
+      <div class="camera-admin-monitor-heading">
+        <div>
+          <p class="camera-kicker">HEADQUARTERS MONITOR</p>
+          <h2 id="adminMonitorTitle">Ruling Eye 本部モニター</h2>
+        </div>
+        <p id="adminMonitorStatus" class="camera-admin-monitor-status">大会管理情報を読み込むと端末状態を表示します。</p>
+      </div>
+      <div id="adminMonitorGrid" class="camera-admin-monitor-grid" aria-live="polite"></div>
+    </section>
+
     <section class="camera-admin-layout">
       <aside class="camera-sidebar">
-        <section class="camera-panel ruling-eye-call-targets camera-admin-primary-panel" aria-label="Ruling Eye呼出対象">
-          <div>
-            <h2>Ruling Eye呼出対象</h2>
-            <p class="ruling-eye-call-target-note">ログイン状態と競技委員端末の待機状態を表示します。</p>
+        <details class="camera-admin-details">
+          <summary>詳細なRuling Eye呼出対象</summary>
+          <div class="camera-admin-details-content">
+            <section class="camera-panel ruling-eye-call-targets camera-admin-primary-panel" aria-label="Ruling Eye呼出対象">
+              <div>
+                <h2>Ruling Eye呼出対象</h2>
+                <p class="ruling-eye-call-target-note">ログイン状態と競技委員端末の待機状態を表示します。</p>
+              </div>
+              <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
+                <p class="camera-empty">最新データを取得すると、iPhone No.1〜No.7の状態を表示します。</p>
+              </div>
+            </section>
           </div>
-          <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
-            <p class="camera-empty">最新データを取得すると、iPhone No.1〜No.7の状態を表示します。</p>
-          </div>
-        </section>
+        </details>
 
-        <section class="camera-panel hq-request-panel" aria-label="本部から映像依頼">
+        <section id="hqRequestPanel" class="camera-panel hq-request-panel" aria-label="本部から映像依頼">
           <div class="camera-section-heading"><h2>本部から映像依頼</h2></div>
           <p id="selectedOfficer" class="camera-selected-officer">待機中の競技委員を選択してください</p>
           <label class="camera-field">ホール番号<input id="requestHole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 8"></label>

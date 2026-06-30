@@ -86,6 +86,30 @@ button { cursor: pointer; }
 #adminMonitoringStatus[data-state="starting"] { color: #8a5200; }
 #adminMonitoringStatus[data-state="error"] { color: var(--camera-red); }
 .camera-admin-command-bar .ruling-eye-status { padding: 7px 10px; font-size: .78rem; }
+.camera-admin-monitor-panel { display: grid; gap: 14px; margin-bottom: 18px; padding: 18px; border-color: #8cb5d1; background: linear-gradient(180deg, #f9fcfe 0%, #eef5f9 100%); box-shadow: 0 8px 24px rgb(11 41 66 / 11%); }
+.camera-admin-monitor-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.camera-admin-monitor-heading h2 { margin: 0; color: var(--camera-navy); font-size: 1.25rem; }
+.camera-admin-monitor-status { margin: 0; color: var(--camera-muted); font-size: .78rem; font-weight: 800; text-align: right; }
+.camera-admin-monitor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.camera-admin-monitor-card { position: relative; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: 9px; min-width: 0; min-height: 205px; border: 2px solid #c2d0d9; border-radius: 13px; padding: 14px; background: #f8fafb; box-shadow: inset 0 0 0 3px rgb(11 41 66 / 3%), 0 4px 12px rgb(11 41 66 / 8%); cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease; }
+.camera-admin-monitor-card:hover { transform: translateY(-1px); }
+.camera-admin-monitor-card:focus-visible { outline: 3px solid rgb(23 105 170 / 32%); outline-offset: 2px; }
+.camera-admin-monitor-card.is-selected { box-shadow: inset 0 0 0 2px #fff, 0 0 0 3px rgb(23 105 170 / 28%); }
+.camera-admin-monitor-card[data-monitor-device="reserve"] { grid-column: 2; cursor: default; }
+.camera-admin-monitor-card[data-state="online"] { border-color: #51ac94; background: linear-gradient(150deg, #edfaf6, #fff); }
+.camera-admin-monitor-card[data-state="busy"] { border-color: #dd9c2d; background: linear-gradient(150deg, #fff1ce, #fffaf0); box-shadow: inset 0 0 0 3px rgb(221 156 45 / 8%), 0 5px 15px rgb(131 84 6 / 15%); }
+.camera-admin-monitor-card[data-state="not-waiting"] { border-color: #82a9c1; background: linear-gradient(150deg, #edf5fa, #fff); }
+.camera-admin-monitor-card[data-state="stale"] { border-color: #d1a14f; background: linear-gradient(150deg, #fff7df, #fff); }
+.camera-admin-monitor-card[data-state="offline"], .camera-admin-monitor-card[data-state="unlogged"] { border-color: #cbd4da; color: #687680; background: #f3f5f6; }
+.camera-admin-monitor-card[data-state="reserve"] { border-style: dashed; border-color: #d5dce1; color: #7a858d; background: #f7f8f9; opacity: .8; }
+.camera-admin-monitor-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.camera-admin-monitor-device { color: var(--camera-navy); font-size: 1.3rem; font-weight: 950; letter-spacing: .01em; }
+.camera-admin-monitor-role { border-radius: 99px; padding: 4px 8px; color: var(--camera-blue-dark); background: #dfeef7; font-size: .68rem; font-weight: 900; white-space: nowrap; }
+.camera-admin-monitor-name { overflow: hidden; color: var(--camera-navy); font-size: 1.02rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.camera-admin-monitor-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--camera-muted); font-size: .75rem; font-weight: 800; }
+.camera-admin-monitor-meta { display: grid; align-content: start; gap: 4px; color: var(--camera-muted); font-size: .72rem; font-weight: 700; }
+.camera-admin-monitor-card .camera-button { width: 100%; min-height: 40px; padding: 8px 10px; font-size: .8rem; }
+.camera-admin-monitor-card .camera-button:disabled { pointer-events: none; }
 .camera-admin-layout { display: grid; grid-template-columns: minmax(390px, 500px) minmax(0, 1fr); gap: 22px; align-items: start; }
 .camera-sidebar { display: grid; gap: 18px; }.tournament-panel, .camera-memo-panel { padding: 16px; }.tournament-panel { display: grid; gap: 12px; }
 .camera-admin-primary-panel { display: grid; gap: 12px; border: 2px solid #86b8d8; padding: 16px; background: #fbfdff; box-shadow: 0 6px 18px rgb(23 105 170 / 10%); }
@@ -173,6 +197,6 @@ button { cursor: pointer; }
 .camera-video-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }.camera-video-actions .camera-button { min-width: 145px; }
 
 @media (max-width: 960px) { .camera-admin-layout { grid-template-columns: 1fr; }.camera-admin-command-controls { grid-template-columns: 1fr 1fr; }.camera-admin-command-controls .camera-field { grid-column: 1 / -1; }.camera-admin-overview { grid-template-columns: 1fr 1fr; }.camera-remote-wrap { min-height: 0; } }
-@media (max-width: 760px) { .camera-admin-shell { width: min(100% - 28px, 680px); padding-top: 14px; }.camera-admin-header { display: grid; gap: 4px; }.camera-admin-header .camera-status { margin: 0; }.camera-admin-command-bar { position: static; }.camera-admin-command-controls { grid-template-columns: 1fr; }.camera-admin-command-controls .camera-field { grid-column: auto; }.camera-admin-command-controls .camera-button { width: 100%; }.camera-admin-overview { grid-template-columns: 1fr; }.camera-sidebar { grid-template-columns: 1fr; }.camera-remote-wrap { aspect-ratio: 4 / 3; } }
-@media (max-width: 520px) { .quality-mode-buttons { grid-template-columns: 1fr; }.officer-secondary-actions { grid-template-columns: 1fr; }.ruling-eye-summary-grid, .ruling-eye-row { grid-template-columns: 1fr; }.ruling-eye-row em { justify-self: start; } }
+@media (max-width: 760px) { .camera-admin-shell { width: min(100% - 28px, 680px); padding-top: 14px; }.camera-admin-header, .camera-admin-monitor-heading { display: grid; gap: 4px; }.camera-admin-header .camera-status { margin: 0; }.camera-admin-monitor-status { text-align: left; }.camera-admin-command-bar { position: static; }.camera-admin-command-controls { grid-template-columns: 1fr; }.camera-admin-command-controls .camera-field { grid-column: auto; }.camera-admin-command-controls .camera-button { width: 100%; }.camera-admin-overview { grid-template-columns: 1fr; }.camera-admin-monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.camera-sidebar { grid-template-columns: 1fr; }.camera-remote-wrap { aspect-ratio: 4 / 3; } }
+@media (max-width: 520px) { .quality-mode-buttons, .camera-admin-monitor-grid { grid-template-columns: 1fr; }.camera-admin-monitor-card[data-monitor-device="reserve"] { grid-column: auto; }.officer-secondary-actions { grid-template-columns: 1fr; }.ruling-eye-summary-grid, .ruling-eye-row { grid-template-columns: 1fr; }.ruling-eye-row em { justify-self: start; } }
 @media (max-width: 380px) { .camera-field-grid { grid-template-columns: 1fr; }.camera-field-wide { grid-column: auto; } }

@@ -1033,6 +1033,9 @@
     const rulingEyeAssignmentList = $('rulingEyeAssignmentList');
     const rulingEyeLoginList = $('rulingEyeLoginList');
     const rulingEyeCallCandidateList = $('rulingEyeCallCandidateList');
+    const adminMonitorGrid = $('adminMonitorGrid');
+    const adminMonitorStatus = $('adminMonitorStatus');
+    const hqRequestPanel = $('hqRequestPanel');
     const adminTournamentId = $('adminTournamentId');
     const adminTournamentName = $('adminTournamentName');
     const adminLastLoaded = $('adminLastLoaded');
@@ -1284,6 +1287,113 @@
       if (officer.status === 'offline') return { key: 'offline', label: 'オフライン', action: '呼出不可', officer };
       return { key: 'not-waiting', label: '未待機', action: '待機開始待ち', officer };
     }
+    function renderAdminMonitorGrid(data = rulingEyeAdminData) {
+      if (!adminMonitorGrid) return;
+      const candidatesByDevice = new Map(
+        rulingEyeCallCandidates.map((candidate) => [String(candidate.deviceNo), candidate])
+      );
+      const cards = ['1', '2', '3', '4', '5', '6', '7'].map((number) => {
+        const candidate = candidatesByDevice.get(number) || null;
+        const availability = rulingEyeCandidateAvailability(candidate);
+        const cameraOfficer = availability.officer;
+        const quality = cameraOfficer?.qualityLabel
+          || candidate?.qualityLabel
+          || QUALITY_MODES[cameraOfficer?.qualityMode || candidate?.qualityMode]?.label
+          || '未取得';
+        const lastUpdated = cameraOfficer?.lastSeen || cameraOfficer?.updatedAt || null;
+        const role = number === '1' ? '競技委員長' : '競技委員';
+        const name = candidate?.officerName || '未ログイン';
+        const selected = candidate
+          && selectedOfficerData?.source === 'ruling_eye'
+          && selectedOfficerData.sessionId === candidate.sessionId;
+        const canRequest = availability.key === 'online';
+        return `
+          <article class="camera-admin-monitor-card${selected ? ' is-selected' : ''}" data-monitor-device="${number}" data-state="${escapeHtml(availability.key)}" tabindex="0" role="button" aria-label="iPhone No.${number} ${escapeHtml(name)} ${escapeHtml(availability.label)}">
+            <div class="camera-admin-monitor-card-head">
+              <span class="camera-admin-monitor-device">No.${number}</span>
+              <span class="camera-admin-monitor-role">${escapeHtml(role)}</span>
+            </div>
+            <strong class="camera-admin-monitor-name">${escapeHtml(name)}</strong>
+            <div class="camera-admin-monitor-state">
+              <span>状態</span>
+              <em class="admin-state-badge state-${escapeHtml(availability.key)}">${escapeHtml(availability.label)}</em>
+            </div>
+            <div class="camera-admin-monitor-meta">
+              <span>画質: ${escapeHtml(candidate ? quality : '-')}</span>
+              <span>最終更新: ${escapeHtml(lastUpdated ? formatTime(lastUpdated) : '-')}</span>
+            </div>
+            <button class="camera-button camera-button-primary" type="button"${canRequest ? '' : ' disabled'}>${canRequest ? '映像依頼' : '呼出不可'}</button>
+          </article>
+        `;
+      });
+      cards.push(`
+        <article class="camera-admin-monitor-card" data-monitor-device="reserve" data-state="reserve" tabindex="0" role="button" aria-label="予備 未使用">
+          <div class="camera-admin-monitor-card-head">
+            <span class="camera-admin-monitor-device">予備</span>
+            <span class="camera-admin-monitor-role">未使用</span>
+          </div>
+          <strong class="camera-admin-monitor-name">未使用</strong>
+          <div class="camera-admin-monitor-state">
+            <span>状態</span>
+            <em class="admin-state-badge">予備</em>
+          </div>
+          <div class="camera-admin-monitor-meta">
+            <span>画質: -</span>
+            <span>最終更新: -</span>
+          </div>
+          <button class="camera-button camera-button-secondary" type="button" disabled>呼出不可</button>
+        </article>
+      `);
+      adminMonitorGrid.innerHTML = cards.join('');
+      if (adminMonitorStatus) {
+        if (!data) {
+          adminMonitorStatus.textContent = '大会管理情報は未読込です。';
+        } else if (!data.settingExists) {
+          adminMonitorStatus.textContent = '大会設定が見つかりません。';
+        } else if (data.setting?.deleted === true) {
+          adminMonitorStatus.textContent = '削除済みの大会です。';
+        } else {
+          adminMonitorStatus.textContent = '端末状態を自動監視中です。待機中のカードから映像依頼できます。';
+        }
+      }
+    }
+    function monitorCardGuidance(availability, candidate, deviceNo) {
+      const label = candidate ? `No.${deviceNo} ${candidate.officerName}` : `No.${deviceNo}`;
+      if (availability.key === 'busy') return `${label}は現在対応中です。`;
+      if (availability.key === 'not-waiting') return `${label}は競技委員側で待機開始が必要です。`;
+      if (availability.key === 'stale') return `${label}は端末の更新が止まっています。競技委員側の画面を確認してください。`;
+      if (availability.key === 'offline') return `${label}はオフラインです。競技委員側の画面を確認してください。`;
+      return `${label}はruling_eye.htmlで大会ログインが必要です。`;
+    }
+    function clearMonitorSelection(message) {
+      selectedOfficerData = null;
+      selectedOfficer.textContent = message;
+      sendRequestButton.disabled = true;
+      renderRulingEyeCallCandidates();
+    }
+    function handleAdminMonitorCard(deviceNo) {
+      if (deviceNo === 'reserve') {
+        const message = '予備枠です。映像依頼には使用できません。';
+        clearMonitorSelection(message);
+        setRulingEyeAdminStatus(message, 'warning');
+        setStatus(status, message, 'calling');
+        return;
+      }
+      const candidate = rulingEyeCallCandidates.find((item) => item.deviceNo === String(deviceNo)) || null;
+      const availability = rulingEyeCandidateAvailability(candidate);
+      if (candidate && availability.key === 'online') {
+        selectOfficer(candidate);
+        const message = `No.${deviceNo} ${candidate.officerName}を選択しました。ホール・組・理由を入力してください。`;
+        setRulingEyeAdminStatus(message, 'success');
+        setStatus(status, message, 'connected');
+        hqRequestPanel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const message = monitorCardGuidance(availability, candidate, deviceNo);
+      clearMonitorSelection(message);
+      setRulingEyeAdminStatus(message, 'warning');
+      setStatus(status, message, 'calling');
+    }
     function renderRulingEyeAdminSummary(data = rulingEyeAdminData) {
       if (!rulingEyeAdminSummary || !data) return;
       updateAdminOverview(data);
@@ -1369,6 +1479,7 @@
       rulingEyeCandidatesBySessionId = new Map(
         rulingEyeCallCandidates.map((candidate) => [candidate.sessionId, candidate])
       );
+      renderAdminMonitorGrid(data);
       if (selectedOfficerData?.source === 'ruling_eye') {
         const selectedCandidate = rulingEyeCandidatesBySessionId.get(selectedOfficerData.sessionId);
         if (!selectedCandidate || rulingEyeCandidateAvailability(selectedCandidate).key !== 'online') {
@@ -1949,6 +2060,7 @@
           rulingEyeCallCandidates = [];
           rulingEyeCandidatesBySessionId = new Map();
           officersCache = [];
+          renderAdminMonitorGrid(null);
           if (rulingEyeCallCandidateList) {
             rulingEyeCallCandidateList.innerHTML = '<p class="camera-empty">「最新データ取得」を押してRuling Eye呼出対象を表示してください。</p>';
           }
@@ -2120,6 +2232,18 @@
         if (candidate) selectOfficer(candidate);
       });
     }
+    if (adminMonitorGrid) {
+      adminMonitorGrid.addEventListener('click', (event) => {
+        const card = event.target.closest('[data-monitor-device]');
+        if (card) handleAdminMonitorCard(card.dataset.monitorDevice);
+      });
+      adminMonitorGrid.addEventListener('keydown', (event) => {
+        const card = event.target.closest('[data-monitor-device]');
+        if (!card || event.target !== card || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        handleAdminMonitorCard(card.dataset.monitorDevice);
+      });
+    }
     hqCallList.addEventListener('click', (event) => {
       const button = event.target.closest('[data-review-call]');
       if (button) connect(button.dataset.reviewCall);
@@ -2158,6 +2282,7 @@
     });
     saveAssignmentsButton.addEventListener('click', saveAssignments);
     resetRosterEditor();
+    renderAdminMonitorGrid();
     watchRoster();
     completeButton.addEventListener('click', complete);
     manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });
