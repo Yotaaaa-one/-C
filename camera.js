@@ -1014,6 +1014,13 @@
     const requestReason = $('requestReason');
     const sendRequestButton = $('sendRequestButton');
     const hqCallList = $('hqCallList');
+    const hqCurrentCallCount = $('hqCurrentCallCount');
+    const hqCallHistoryList = $('hqCallHistoryList');
+    const hqCallHistoryCount = $('hqCallHistoryCount');
+    const historyLoadMoreButton = $('historyLoadMoreButton');
+    const adminViewerPanel = $('adminViewerPanel');
+    const adminTabButtons = [...document.querySelectorAll('[data-admin-tab]')];
+    const adminTabPanels = [...document.querySelectorAll('[data-admin-tab-panel]')];
     const rosterOfficerName = $('rosterOfficerName');
     const rosterCategory = $('rosterCategory');
     const rosterNote = $('rosterNote');
@@ -1086,8 +1093,24 @@
     let currentViewingOfficerName = '';
     let currentViewingDeviceNo = '';
     let isAdminViewingActiveSession = false;
+    let hqCallsCache = [];
+    let hqCallHistoryVisibleCount = 10;
+    let activeCameraSessionsById = new Map();
     debug('signaling', '接続する呼出を選択してください');
     debug('viewingGuard', '対応中セッションなし');
+
+    function setAdminTab(tabName, { focus = false } = {}) {
+      adminTabButtons.forEach((button) => {
+        const selected = button.dataset.adminTab === tabName;
+        button.classList.toggle('is-active', selected);
+        button.setAttribute('aria-selected', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+        if (selected && focus) button.focus();
+      });
+      adminTabPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.adminTabPanel !== tabName;
+      });
+    }
 
     function hasActiveViewingSession() {
       return Boolean(isAdminViewingActiveSession && currentViewingSessionId);
@@ -1862,6 +1885,7 @@
     }
     function selectOfficer(officer) {
       if (!officer) return;
+      setAdminTab('current');
       selectedOfficerData = officer;
       if (officer.source === 'ruling_eye') {
         const availability = rulingEyeCandidateAvailability(officer);
@@ -1873,24 +1897,98 @@
       sendRequestButton.disabled = !selectedOfficerCanRequest(officer);
       requestHole.focus();
     }
-    function renderHqCalls(calls) {
-      const sorted = calls.sort((a, b) => (b.requestedAt?.toMillis?.() || 0) - (a.requestedAt?.toMillis?.() || 0));
-      if (!sorted.length) {
-        hqCallList.innerHTML = '<p class="camera-empty">映像依頼はありません。</p>';
+    function hqCallStatusLabel(call) {
+      const labels = {
+        requested: '応答待ち',
+        accepted: '受付済み',
+        connecting: '接続準備中',
+        active: '映像確認可能',
+        streaming: '映像確認可能',
+        connected: '映像確認中',
+        busy: '対応中',
+        declined: '対応不可',
+        ended: '完了済み',
+        completed: '完了済み',
+        missed: '未応答',
+        expired: '期限切れ'
+      };
+      return labels[call.status] || call.status || '状態確認中';
+    }
+    function isTerminalHqCall(call) {
+      return ['declined', 'ended', 'completed', 'missed', 'expired'].includes(String(call.status || ''));
+    }
+    function renderCurrentHqCalls() {
+      const currentCalls = hqCallsCache
+        .filter((call) => !isTerminalHqCall(call))
+        .sort((a, b) => timestampMillis(b.requestedAt) - timestampMillis(a.requestedAt));
+      if (hqCurrentCallCount) hqCurrentCallCount.textContent = String(currentCalls.length);
+      if (!currentCalls.length) {
+        hqCallList.innerHTML = '<p class="camera-empty">現在進行中の映像依頼はありません。</p>';
         updateViewingGuardUi();
         return;
       }
-      hqCallList.innerHTML = sorted.map((call) => {
-        const statusLabel = { requested: '依頼中', accepted: '受付済み', connected: '接続中', declined: '対応不可', ended: '完了', missed: '未応答' }[call.status] || call.status;
-        const canReview = call.sessionId && ['accepted', 'connected'].includes(call.status);
-        return `<article class="camera-call-card" data-status="${escapeHtml(call.status || '')}">
-          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(call.deviceNo || '-')} / ${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="admin-state-badge state-call-${escapeHtml(call.status || 'unknown')}">${escapeHtml(statusLabel)}</span></div>
-          <div class="camera-card-meta"><span>${escapeHtml(call.hole || '-')}H / ${escapeHtml(call.groupNo || '-')}組</span><time>${formatTime(call.requestedAt)}</time></div>
-          <div class="camera-card-meta"><span>${escapeHtml(call.reason || '本部確認')}</span><span>${call.sessionId ? 'session準備済み' : ''}</span></div>
-          ${canReview ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(call.sessionId)}">映像を確認</button>` : ''}
+      hqCallList.innerHTML = currentCalls.map((call) => {
+        const status = String(call.status || '');
+        const sessionId = String(call.sessionId || '');
+        const activeCameraSession = sessionId ? activeCameraSessionsById.get(sessionId) : null;
+        const reviewableStatus = ['accepted', 'connecting', 'active', 'streaming', 'connected', 'busy'].includes(status);
+        const canReview = Boolean(sessionId && reviewableStatus && activeCameraSession);
+        const waitingMessage = status === 'requested'
+          ? '競技委員側の応答を待っています。'
+          : sessionId && !activeCameraSession
+            ? '映像セッションの開始を確認しています。'
+            : '競技委員側の映像開始を待っています。';
+        return `<article class="camera-call-card camera-current-request-card" data-status="${escapeHtml(status)}" data-session-id="${escapeHtml(sessionId)}">
+          <div class="camera-card-top"><span class="camera-card-name">No.${escapeHtml(call.deviceNo || '-')} / ${escapeHtml(call.targetOfficerName || '競技委員')}</span><span class="admin-state-badge state-call-${escapeHtml(status || 'unknown')}">${escapeHtml(hqCallStatusLabel(call))}</span></div>
+          <div class="camera-card-meta"><strong>${escapeHtml(call.hole || '-')}番ホール / ${escapeHtml(call.groupNo || '-')}組</strong><time>依頼: ${escapeHtml(formatTime(call.requestedAt))}</time></div>
+          <p class="camera-current-request-reason">理由: ${escapeHtml(call.reason || '本部確認')}</p>
+          ${canReview
+            ? `<button class="camera-button camera-button-primary" type="button" data-review-call="${escapeHtml(sessionId)}">映像確認</button>`
+            : `<button class="camera-button camera-button-secondary" type="button" disabled>${status === 'requested' ? '応答待ち' : '映像開始待ち'}</button><p class="camera-current-request-waiting">${escapeHtml(waitingMessage)}</p>`}
         </article>`;
       }).join('');
       updateViewingGuardUi();
+    }
+    function renderHqCallHistory() {
+      if (!hqCallHistoryList) return;
+      const history = hqCallsCache
+        .filter(isTerminalHqCall)
+        .sort((a, b) => {
+          const aTime = timestampMillis(a.endedAt || a.updatedAt || a.requestedAt);
+          const bTime = timestampMillis(b.endedAt || b.updatedAt || b.requestedAt);
+          return bTime - aTime;
+        });
+      if (hqCallHistoryCount) hqCallHistoryCount.textContent = String(history.length);
+      if (!history.length) {
+        hqCallHistoryList.innerHTML = '<p class="camera-empty">完了済みの映像依頼はありません。</p>';
+        if (historyLoadMoreButton) historyLoadMoreButton.hidden = true;
+        return;
+      }
+      const visible = history.slice(0, hqCallHistoryVisibleCount);
+      hqCallHistoryList.innerHTML = visible.map((call) => `
+        <details class="camera-history-card" data-status="${escapeHtml(call.status || '')}">
+          <summary>
+            <span class="camera-history-title">No.${escapeHtml(call.deviceNo || '-')} ${escapeHtml(call.targetOfficerName || '競技委員')}</span>
+            <span>${escapeHtml(call.hole || '-')}番 / ${escapeHtml(call.groupNo || '-')}組</span>
+            <em class="admin-state-badge state-call-${escapeHtml(call.status || 'unknown')}">${escapeHtml(hqCallStatusLabel(call))}</em>
+          </summary>
+          <div class="camera-history-detail">
+            <p><strong>理由:</strong> ${escapeHtml(call.reason || '本部確認')}</p>
+            <p><strong>裁定メモ:</strong> ${escapeHtml(call.memo || 'メモなし')}</p>
+            <p><strong>依頼時刻:</strong> ${escapeHtml(formatDateTime(call.requestedAt))}</p>
+            <p><strong>完了時刻:</strong> ${escapeHtml(formatDateTime(call.endedAt || call.updatedAt))}</p>
+          </div>
+        </details>
+      `).join('');
+      if (historyLoadMoreButton) {
+        historyLoadMoreButton.hidden = history.length <= hqCallHistoryVisibleCount;
+        historyLoadMoreButton.textContent = `さらに表示（残り${Math.max(0, history.length - hqCallHistoryVisibleCount)}件）`;
+      }
+    }
+    function renderHqCalls(calls) {
+      hqCallsCache = [...calls];
+      renderCurrentHqCalls();
+      renderHqCallHistory();
     }
     async function sendHqRequest() {
       const hole = requestHole.value.trim();
@@ -2021,9 +2119,11 @@
       const displaySessions = sessions.filter((item) => item.status === 'calling' || item.status === 'connected').sort((a, b) => {
         const aTime = a.createdAt?.toMillis?.() || 0; const bTime = b.createdAt?.toMillis?.() || 0; return aTime - bTime;
       });
+      activeCameraSessionsById = new Map(displaySessions.map((session) => [String(session.id), session]));
       callCount.textContent = displaySessions.length;
       if (!displaySessions.length) {
         callList.innerHTML = '<p class="camera-empty">現在、呼出はありません。</p>';
+        renderCurrentHqCalls();
         updateViewingGuardUi();
         return;
       }
@@ -2033,6 +2133,7 @@
           <div class="camera-card-meta"><span>${escapeHtml(item.hole || '-')}H / ${escapeHtml(item.groupNo || '-')}組</span><time>${formatTime(item.createdAt)}</time></div>
           <button class="camera-button camera-button-primary" type="button" data-connect="${escapeHtml(item.id)}">${item.status === 'connected' ? '映像を確認' : '接続'}</button>
         </article>`).join('');
+      renderCurrentHqCalls();
       updateViewingGuardUi();
     }
     async function watchCalls() {
@@ -2055,6 +2156,10 @@
         activeTournamentId = tournamentId;
         if (adminTournamentId) adminTournamentId.textContent = tournamentId;
         assignmentCache = [];
+        activeCameraSessionsById = new Map();
+        hqCallsCache = [];
+        hqCallHistoryVisibleCount = 10;
+        renderHqCallHistory();
         if (tournamentChanged) {
           rulingEyeAdminData = null;
           rulingEyeCallCandidates = [];
@@ -2116,6 +2221,7 @@
       if (!db || !activeTournamentId) return;
       const requestedSessionId = String(sessionId || '');
       if (!requestedSessionId) return;
+      setAdminTab('current');
       if (hasActiveViewingSession()) {
         if (currentViewingSessionId !== requestedSessionId) {
           showViewingSessionGuard(requestedSessionId);
@@ -2150,6 +2256,7 @@
         viewerTitle.textContent = `${data.officerName || '競技委員'}（${data.hole || '-'}H / ${data.groupNo || '-'}組）`;
         viewerState.textContent = '接続中'; viewerState.dataset.state = 'calling';
         setPlaceholderVisible(remotePlaceholder, true, '映像を接続しています…');
+        adminViewerPanel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         peer.addTransceiver('video', { direction: 'recvonly' }); peer.addTransceiver('audio', { direction: 'recvonly' });
         peer.ontrack = (event) => {
@@ -2219,7 +2326,22 @@
     watchButton.addEventListener('click', watchCalls);
     if (loadRulingEyeAdminButton) loadRulingEyeAdminButton.addEventListener('click', () => loadRulingEyeCameraAdminData());
     tournamentInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') watchCalls(); });
-    callList.addEventListener('click', (event) => { const button = event.target.closest('[data-connect]'); if (button) connect(button.dataset.connect); });
+    adminTabButtons.forEach((button) => {
+      button.addEventListener('click', () => setAdminTab(button.dataset.adminTab));
+    });
+    if (historyLoadMoreButton) {
+      historyLoadMoreButton.addEventListener('click', () => {
+        hqCallHistoryVisibleCount += 10;
+        renderHqCallHistory();
+      });
+    }
+    callList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-connect]');
+      if (button) {
+        setAdminTab('current');
+        connect(button.dataset.connect);
+      }
+    });
     officerList.addEventListener('click', (event) => {
       const button = event.target.closest('[data-select-officer]');
       if (button) selectOfficer(officersById.get(button.dataset.selectOfficer));
@@ -2283,6 +2405,8 @@
     saveAssignmentsButton.addEventListener('click', saveAssignments);
     resetRosterEditor();
     renderAdminMonitorGrid();
+    renderHqCallHistory();
+    setAdminTab('current');
     watchRoster();
     completeButton.addEventListener('click', complete);
     manualPlayButton.addEventListener('click', () => { playRemoteVideo({ manual: true }); });

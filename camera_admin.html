@@ -34,67 +34,119 @@
       <p id="rulingEyeAdminStatus" class="ruling-eye-status">大会IDを入力して「最新データ取得」を押してください。</p>
     </section>
 
-    <section class="camera-panel camera-admin-monitor-panel" aria-labelledby="adminMonitorTitle">
-      <div class="camera-admin-monitor-heading">
-        <div>
-          <p class="camera-kicker">HEADQUARTERS MONITOR</p>
-          <h2 id="adminMonitorTitle">Ruling Eye 本部モニター</h2>
+    <nav class="camera-admin-tabs" role="tablist" aria-label="本部画面">
+      <button id="adminCurrentTab" class="camera-admin-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="adminCurrentPanel" data-admin-tab="current">現在対応</button>
+      <button id="adminHistoryTab" class="camera-admin-tab" type="button" role="tab" aria-selected="false" aria-controls="adminHistoryPanel" data-admin-tab="history">履歴</button>
+      <button id="adminDetailsTab" class="camera-admin-tab" type="button" role="tab" aria-selected="false" aria-controls="adminDetailsPanel" data-admin-tab="details">詳細 / デバッグ</button>
+    </nav>
+
+    <section id="adminCurrentPanel" class="camera-admin-tab-panel" role="tabpanel" aria-labelledby="adminCurrentTab" data-admin-tab-panel="current">
+      <section class="camera-panel camera-admin-monitor-panel" aria-labelledby="adminMonitorTitle">
+        <div class="camera-admin-monitor-heading">
+          <div>
+            <p class="camera-kicker">HEADQUARTERS MONITOR</p>
+            <h2 id="adminMonitorTitle">Ruling Eye 本部モニター</h2>
+          </div>
+          <p id="adminMonitorStatus" class="camera-admin-monitor-status">大会管理情報を読み込むと端末状態を表示します。</p>
         </div>
-        <p id="adminMonitorStatus" class="camera-admin-monitor-status">大会管理情報を読み込むと端末状態を表示します。</p>
-      </div>
-      <div id="adminMonitorGrid" class="camera-admin-monitor-grid" aria-live="polite"></div>
+        <div id="adminMonitorGrid" class="camera-admin-monitor-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="camera-admin-layout">
+        <aside class="camera-sidebar">
+          <section id="hqRequestPanel" class="camera-panel hq-request-panel" aria-label="映像依頼フォーム">
+            <div class="camera-section-heading"><h2>映像依頼</h2></div>
+            <p id="selectedOfficer" class="camera-selected-officer">本部モニターから待機中の競技委員を選択してください</p>
+            <label class="camera-field">ホール番号<input id="requestHole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 5"></label>
+            <label class="camera-field">組番号<input id="requestGroupNo" type="text" inputmode="numeric" placeholder="例: 12"></label>
+            <label class="camera-field">理由
+              <select id="requestReason">
+                <option>競技委員要請</option><option>ボール確認</option><option>救済確認</option><option>本部確認</option><option>その他</option>
+              </select>
+            </label>
+            <button id="sendRequestButton" class="camera-button camera-button-primary" type="button" disabled>映像依頼を送信</button>
+          </section>
+
+          <section class="camera-panel camera-current-requests-panel" aria-labelledby="currentRequestsTitle">
+            <div class="camera-section-heading">
+              <h2 id="currentRequestsTitle">本部からの映像依頼</h2>
+              <span id="hqCurrentCallCount" class="camera-count">0</span>
+            </div>
+            <p class="camera-current-requests-note">競技委員側が映像を開始すると、この一覧からすぐ映像確認できます。</p>
+            <div id="hqCallList" class="camera-call-list" aria-live="polite"><p class="camera-empty">現在進行中の映像依頼はありません。</p></div>
+          </section>
+        </aside>
+
+        <section class="camera-viewer-column">
+          <section id="adminViewerPanel" class="camera-panel camera-viewer-panel">
+            <div class="camera-section-heading">
+              <h2 id="viewerTitle">映像確認</h2>
+              <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
+            </div>
+            <div id="adminViewingGuard" class="camera-viewing-guard" data-state="idle" role="status" aria-live="polite">
+              <p><strong>運用ルール:</strong> 本部で確認できる映像は1件ずつです。別の競技委員映像を確認する場合は、現在の対応を完了してください。</p>
+              <p id="currentViewingSummary" class="camera-viewing-summary">現在対応中: なし</p>
+            </div>
+            <p id="qualityDisplay" class="camera-quality-display">画質: 未取得</p>
+            <div class="camera-remote-wrap">
+              <video id="remoteVideo" class="camera-video camera-remote-video" autoplay playsinline muted controls></video>
+              <div id="remotePlaceholder" class="camera-video-placeholder">進行中の依頼から「映像確認」を押してください</div>
+            </div>
+            <div class="camera-video-actions" aria-label="映像と音声の操作">
+              <button id="manualPlayButton" class="camera-button camera-button-primary" type="button" hidden>映像を表示</button>
+              <button id="reloadVideoButton" class="camera-button camera-button-secondary" type="button" hidden>映像を再読み込み</button>
+              <button id="unmuteButton" class="camera-button camera-button-secondary" type="button" hidden>音声 ON</button>
+            </div>
+            <p id="adminError" class="camera-error" role="alert" hidden></p>
+          </section>
+
+          <section class="camera-panel camera-memo-panel">
+            <label class="camera-field" for="memo">裁定メモ
+              <textarea id="memo" rows="4" placeholder="確認内容・裁定内容を記録"></textarea>
+            </label>
+            <button id="completeButton" class="camera-button camera-button-danger" type="button" disabled>対応完了</button>
+          </section>
+        </section>
+      </section>
     </section>
 
-    <section class="camera-admin-layout">
-      <aside class="camera-sidebar">
-        <details class="camera-admin-details">
-          <summary>詳細なRuling Eye呼出対象</summary>
-          <div class="camera-admin-details-content">
-            <section class="camera-panel ruling-eye-call-targets camera-admin-primary-panel" aria-label="Ruling Eye呼出対象">
-              <div>
-                <h2>Ruling Eye呼出対象</h2>
-                <p class="ruling-eye-call-target-note">ログイン状態と競技委員端末の待機状態を表示します。</p>
-              </div>
-              <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
-                <p class="camera-empty">最新データを取得すると、iPhone No.1〜No.7の状態を表示します。</p>
-              </div>
-            </section>
+    <section id="adminHistoryPanel" class="camera-admin-tab-panel" role="tabpanel" aria-labelledby="adminHistoryTab" data-admin-tab-panel="history" hidden>
+      <section class="camera-panel camera-history-panel">
+        <div class="camera-section-heading">
+          <div>
+            <h2>映像依頼・裁定履歴</h2>
+            <p class="camera-history-intro">完了済み、対応不可、未応答の依頼を新しい順に表示します。</p>
           </div>
-        </details>
+          <span id="hqCallHistoryCount" class="camera-count">0</span>
+        </div>
+        <div id="hqCallHistoryList" class="camera-history-list"><p class="camera-empty">履歴はありません。</p></div>
+        <button id="historyLoadMoreButton" class="camera-button camera-button-secondary camera-history-more" type="button" hidden>さらに10件表示</button>
+      </section>
+    </section>
 
-        <section id="hqRequestPanel" class="camera-panel hq-request-panel" aria-label="本部から映像依頼">
-          <div class="camera-section-heading"><h2>本部から映像依頼</h2></div>
-          <p id="selectedOfficer" class="camera-selected-officer">待機中の競技委員を選択してください</p>
-          <label class="camera-field">ホール番号<input id="requestHole" type="number" min="1" max="99" inputmode="numeric" placeholder="例: 8"></label>
-          <label class="camera-field">組番号<input id="requestGroupNo" type="text" inputmode="numeric" placeholder="例: 12"></label>
-          <label class="camera-field">理由
-            <select id="requestReason">
-              <option>競技委員要請</option><option>ボール確認</option><option>救済確認</option><option>本部確認</option><option>その他</option>
-            </select>
-          </label>
-          <button id="sendRequestButton" class="camera-button camera-button-primary" type="button" disabled>映像依頼</button>
+    <section id="adminDetailsPanel" class="camera-admin-tab-panel" role="tabpanel" aria-labelledby="adminDetailsTab" data-admin-tab-panel="details" hidden>
+      <section class="camera-admin-details-grid">
+        <section class="camera-panel ruling-eye-call-targets camera-admin-primary-panel" aria-label="Ruling Eye呼出対象">
+          <div>
+            <h2>詳細なRuling Eye呼出対象</h2>
+            <p class="ruling-eye-call-target-note">ログイン状態と競技委員端末の待機状態を表示します。</p>
+          </div>
+          <div id="rulingEyeCallCandidateList" class="ruling-eye-call-target-list">
+            <p class="camera-empty">最新データを取得すると、iPhone No.1〜No.7の状態を表示します。</p>
+          </div>
         </section>
 
-        <details class="camera-admin-details">
-          <summary>依頼・履歴</summary>
-          <div class="camera-admin-details-content">
-            <section class="camera-call-list-section" aria-label="映像依頼の状態一覧">
-              <div class="camera-section-heading"><h2>映像依頼の状態一覧</h2></div>
-              <div id="hqCallList" class="camera-call-list"><p class="camera-empty">映像依頼はありません。</p></div>
-            </section>
-            <section class="camera-call-list-section" aria-label="既存映像セッション">
-              <div class="camera-section-heading">
-                <h2>既存映像セッション</h2>
-                <span id="callCount" class="camera-count">0</span>
-              </div>
-              <div id="callList" class="camera-call-list">
-                <p class="camera-empty">大会IDを入力して呼出を表示してください。</p>
-              </div>
-            </section>
+        <section class="camera-panel camera-detail-panel" aria-label="既存映像セッション">
+          <div class="camera-section-heading">
+            <h2>camera_sessions一覧</h2>
+            <span id="callCount" class="camera-count">0</span>
           </div>
-        </details>
+          <div id="callList" class="camera-call-list">
+            <p class="camera-empty">大会IDを入力して呼出を表示してください。</p>
+          </div>
+        </section>
 
-        <details class="camera-admin-details">
+        <details class="camera-admin-details" open>
           <summary>管理情報・ログイン・割当</summary>
           <div class="camera-admin-details-content">
             <section class="camera-panel ruling-eye-data-panel" aria-label="Ruling Eye大会管理情報">
@@ -145,43 +197,13 @@ rg001,登録競技委員A,登録,有効,登録競技委員</pre></details>
             </section>
           </div>
         </details>
-      </aside>
 
-      <section class="camera-viewer-column">
-        <section class="camera-panel camera-viewer-panel">
-          <div class="camera-section-heading">
-            <h2 id="viewerTitle">映像確認</h2>
-            <span id="viewerState" class="camera-state-badge" data-state="idle">未接続</span>
-          </div>
-          <div id="adminViewingGuard" class="camera-viewing-guard" data-state="idle" role="status" aria-live="polite">
-            <p><strong>運用ルール:</strong> 本部で確認できる映像は1件ずつです。別の競技委員映像を確認する場合は、現在の対応を完了してください。</p>
-            <p id="currentViewingSummary" class="camera-viewing-summary">現在対応中: なし</p>
-          </div>
-          <p id="qualityDisplay" class="camera-quality-display">画質: 未取得</p>
-          <div class="camera-remote-wrap">
-            <video id="remoteVideo" class="camera-video camera-remote-video" autoplay playsinline muted controls></video>
-            <div id="remotePlaceholder" class="camera-video-placeholder">接続する呼出を選択してください</div>
-          </div>
-          <div class="camera-video-actions" aria-label="映像と音声の操作">
-            <button id="manualPlayButton" class="camera-button camera-button-primary" type="button" hidden>映像を表示</button>
-            <button id="reloadVideoButton" class="camera-button camera-button-secondary" type="button" hidden>映像を再読み込み</button>
-            <button id="unmuteButton" class="camera-button camera-button-secondary" type="button" hidden>音声 ON</button>
-          </div>
-          <p id="adminError" class="camera-error" role="alert" hidden></p>
-          <details class="camera-debug" aria-label="WebRTCデバッグ">
-            <summary>WebRTC デバッグ</summary>
-            <ul id="adminDebug" class="camera-debug-list" aria-live="polite">
-              <li>接続する呼出を選択してください</li>
-            </ul>
-          </details>
-        </section>
-
-        <section class="camera-panel camera-memo-panel">
-          <label class="camera-field" for="memo">裁定メモ
-            <textarea id="memo" rows="4" placeholder="確認内容・裁定内容を記録"></textarea>
-          </label>
-          <button id="completeButton" class="camera-button camera-button-danger" type="button" disabled>対応完了</button>
-        </section>
+        <details class="camera-debug camera-admin-debug-panel" open aria-label="WebRTCデバッグ">
+          <summary>WebRTC デバッグ</summary>
+          <ul id="adminDebug" class="camera-debug-list" aria-live="polite">
+            <li>接続する呼出を選択してください</li>
+          </ul>
+        </details>
       </section>
     </section>
   </main>
